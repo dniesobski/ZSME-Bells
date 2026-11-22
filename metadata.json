@@ -1,0 +1,6 @@
+{
+  "name": "HarmoniaBell - Bezstresowe Dzwonki Szkolne (Debian 13)",
+  "description": "System bezstresowych, harmonicznych dzwonków szkolnych dla Linux Debian 13 z panelem konfiguracyjnym WWW, harmonogramami lekcji, odtwarzaczem melodii radiowęzła i integracją systemd.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
