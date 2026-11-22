@@ -2824,9 +2824,9 @@ echo "=== [3/5] Tworzenie katalogu aplikacji /opt/harmonia-bell ==="
 mkdir -p /opt/harmonia-bell
 cd /opt/harmonia-bell
 
-# Rozpakowanie lub pobranie zrodla
-echo "Instalacja pakietow npm..."
-npm install --production
+echo "Instalacja pakietow npm i budowanie aplikacji..."
+npm install --no-audit --no-fund
+npm run build
 
 echo "=== [4/5] Konfiguracja autostartu systemd ==="
 cat << 'EOF' > /etc/systemd/system/harmonia-bell.service
@@ -2877,20 +2877,132 @@ let debianUpdateJob: DebianUpdateJobStatus = {
 function runShellAsync(
   command: string,
   timeoutMs: number = 30000
-): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+): Promise<{ ok: boolean; stdout: string; stderr: string; errorMessage: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     exec(
       command,
-      { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024 },
+      { cwd: process.cwd(), timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
       (error, stdout, stderr) => {
+        const timedOut = Boolean((error as any)?.killed && (error as any)?.signal === 'SIGTERM');
+        const errorMessage = timedOut
+          ? `Przekroczono limit czasu (${Math.round(timeoutMs / 1000)} s).`
+          : error?.message || '';
         resolve({
           ok: !error,
           stdout: (stdout || '').trim(),
           stderr: (stderr || '').trim(),
+          errorMessage,
+          timedOut,
         });
       }
     );
   });
+}
+
+function runStreamingUpdateCommand(
+  file: string,
+  args: string[],
+  timeoutMs: number = 600000
+): Promise<{ ok: boolean; code: number | null; timedOut: boolean; tailOutput: string; errorMessage: string }> {
+  return new Promise((resolve) => {
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: 'true',
+      npm_config_progress: 'false',
+      npm_config_audit: 'false',
+      npm_config_fund: 'false',
+      npm_config_omit: '',
+    };
+    delete childEnv.NODE_ENV;
+
+    const child = spawn(file, args, {
+      cwd: process.cwd(),
+      shell: false,
+      env: childEnv,
+    });
+
+    const tailLines: string[] = [];
+    let settled = false;
+    let timedOut = false;
+
+    const pushLine = (line: string) => {
+      const cleaned = line.replace(/\r/g, '').trim();
+      if (!cleaned) return;
+      const truncated = cleaned.length > 260 ? `${cleaned.slice(0, 260)}...` : cleaned;
+      tailLines.push(truncated);
+      if (tailLines.length > 25) tailLines.shift();
+      appendUpdateLog(truncated);
+    };
+
+    let stdoutBuf = '';
+    let stderrBuf = '';
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBuf += chunk.toString('utf-8');
+      const parts = stdoutBuf.split('\n');
+      stdoutBuf = parts.pop() ?? '';
+      for (const part of parts) pushLine(part);
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuf += chunk.toString('utf-8');
+      const parts = stderrBuf.split('\n');
+      stderrBuf = parts.pop() ?? '';
+      for (const part of parts) pushLine(part);
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!settled) child.kill('SIGKILL');
+      }, 5000);
+    }, timeoutMs);
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        code: null,
+        timedOut: false,
+        tailOutput: tailLines.join('\n'),
+        errorMessage: err.message,
+      });
+    });
+
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (stdoutBuf) pushLine(stdoutBuf);
+      if (stderrBuf) pushLine(stderrBuf);
+      const ok = !timedOut && code === 0;
+      const errorMessage = timedOut
+        ? `Przekroczono limit czasu (${Math.round(timeoutMs / 1000)} s) — sprawdź połączenie z internetem lub zasoby RAM/CPU.`
+        : code !== 0
+        ? `Kod wyjścia: ${code ?? 'nieznany'}`
+        : '';
+      resolve({
+        ok,
+        code,
+        timedOut,
+        tailOutput: tailLines.join('\n'),
+        errorMessage,
+      });
+    });
+  });
+}
+
+function getFileSha256IfExists(relPath: string): string | null {
+  try {
+    const absPath = path.resolve(process.cwd(), relPath);
+    if (!fs.existsSync(absPath)) return null;
+    return crypto.createHash('sha256').update(fs.readFileSync(absPath)).digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 function runCommandFile(
@@ -3373,6 +3485,8 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
       if (check.git.available && check.git.hasRemote) {
         const targetBranch = check.git.branch || 'main';
         const headExistsRes = await runGitCommand(['rev-parse', '--verify', 'HEAD'], 4000);
+        const prevPkgHash = getFileSha256IfExists('package.json');
+        const prevLockHash = getFileSha256IfExists('package-lock.json');
 
         if (!headExistsRes.ok) {
           ensureDataExcludedFromGit();
@@ -3402,19 +3516,35 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
           appendUpdateLog('Kod aplikacji jest już w najnowszej wersji.');
         }
 
-        if (appFilesChanged) {
-          appendUpdateLog('Aktualizacja zależności npm...');
-          const npmInst = await runShellAsync('npm install --omit=dev 2>&1', 120000);
+        const nextPkgHash = getFileSha256IfExists('package.json');
+        const nextLockHash = getFileSha256IfExists('package-lock.json');
+        const missingCoreRuntime =
+          !fs.existsSync(path.resolve(process.cwd(), 'node_modules', 'tsx')) ||
+          !fs.existsSync(path.resolve(process.cwd(), 'node_modules', 'vite'));
+        const depsChanged =
+          missingCoreRuntime || prevPkgHash !== nextPkgHash || prevLockHash !== nextLockHash;
+
+        if (appFilesChanged && depsChanged) {
+          appendUpdateLog('Aktualizacja zależności npm (pełna synchronizacja pakietów)...');
+          const npmInst = await runStreamingUpdateCommand(
+            'npm',
+            ['install', '--no-audit', '--no-fund', '--legacy-peer-deps'],
+            600000
+          );
           if (!npmInst.ok) {
-            throw new Error(`Błąd npm install: ${npmInst.stderr || npmInst.stdout}`);
+            const details = npmInst.errorMessage || npmInst.tailOutput || 'nieznany błąd';
+            throw new Error(`Błąd npm install: ${details}`);
           }
-          appendUpdateLog('Zależności npm zaktualizowane.');
+          appendUpdateLog('Zależności npm zaktualizowane pomyślnie.');
+        } else if (appFilesChanged) {
+          appendUpdateLog('Pliki zależności (package.json) nie uległy zmianie — pomijam npm install.');
         }
 
         appendUpdateLog('Przebudowywanie panelu produkcyjnego (npm run build)...');
-        const buildRes = await runShellAsync('npm run build 2>&1', 120000);
+        const buildRes = await runStreamingUpdateCommand('npm', ['run', 'build'], 300000);
         if (!buildRes.ok) {
-          throw new Error(`Błąd budowania aplikacji: ${buildRes.stderr || buildRes.stdout}`);
+          const details = buildRes.errorMessage || buildRes.tailOutput || 'nieznany błąd';
+          throw new Error(`Błąd budowania aplikacji: ${details}`);
         }
         appendUpdateLog('Panel WWW zbudowany pomyślnie.');
       } else {
@@ -3432,17 +3562,17 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
         );
       } else {
         appendUpdateLog('Odświeżanie repozytoriów Debian 13 (apt-get update)...');
-        const aptUpd = await runShellAsync(`${aptPriv.prefix}apt-get update -y 2>&1`, 60000);
+        const aptUpd = await runShellAsync(`${aptPriv.prefix}apt-get update -y 2>&1`, 120000);
         if (!aptUpd.ok) {
-          throw new Error(`Błąd apt-get update: ${aptUpd.stderr || aptUpd.stdout}`);
+          throw new Error(`Błąd apt-get update: ${aptUpd.stderr || aptUpd.stdout || aptUpd.errorMessage}`);
         }
         appendUpdateLog('Instalowanie aktualizacji pakietów systemowych (apt-get upgrade -y)...');
         const aptUpg = await runShellAsync(
           `DEBIAN_FRONTEND=noninteractive ${aptPriv.prefix}apt-get upgrade -y 2>&1`,
-          300000
+          600000
         );
         if (!aptUpg.ok) {
-          throw new Error(`Błąd apt-get upgrade: ${aptUpg.stderr || aptUpg.stdout}`);
+          throw new Error(`Błąd apt-get upgrade: ${aptUpg.stderr || aptUpg.stdout || aptUpg.errorMessage}`);
         }
         appendUpdateLog('Pakiety systemu Debian 13 zostały pomyślnie zaktualizowane.');
       }
@@ -3452,10 +3582,13 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
 
     const runningUnderSystemd = Boolean(process.env.INVOCATION_ID);
     if (appFilesChanged && runningUnderSystemd) {
+      const unitName = fs.existsSync('/etc/systemd/system/harmoniabell.service')
+        ? 'harmoniabell.service'
+        : 'harmonia-bell.service';
       debianUpdateJob.restartScheduled = true;
-      appendUpdateLog('Wykryto usługę systemd — zaplanowano automatyczny restart harmonia-bell.service za 2s...');
+      appendUpdateLog(`Wykryto usługę systemd — zaplanowano automatyczny restart ${unitName} za 2s...`);
       setTimeout(() => {
-        exec('systemctl restart harmonia-bell.service >/dev/null 2>&1');
+        execFile('systemctl', ['restart', unitName], () => {});
       }, 2000);
     }
 
@@ -3621,7 +3754,14 @@ app.post('/api/debian/run-update', requireAnyPermission(['debian_view']), (req: 
 
 /* ===================== FRONTEND SERVING & DEV MODE ===================== */
 async function startServer() {
-  if (!isProduction) {
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const distIndex = path.join(distPath, 'index.html');
+  const useProdDist = isProduction && fs.existsSync(distIndex);
+
+  if (!useProdDist) {
+    if (isProduction) {
+      console.warn('[HarmoniaBell] Brak zbudowanego pliku dist/index.html — uruchamiam tymczasowo tryb Vite. Wykonaj: npm run build');
+    }
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -3629,10 +3769,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(distIndex);
     });
   }
 

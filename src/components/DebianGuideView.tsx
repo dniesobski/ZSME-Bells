@@ -307,7 +307,8 @@ echo "=== [3/5] Przygotowanie katalogu aplikacji ==="
 mkdir -p /opt/harmonia-bell
 cd /opt/harmonia-bell
 
-npm install --production
+npm install --no-audit --no-fund
+npm run build
 
 echo "=== [4/5] Konfiguracja usługi systemd (autostart) ==="
 cat << 'EOF' > /etc/systemd/system/harmonia-bell.service
