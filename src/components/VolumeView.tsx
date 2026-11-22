@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Volume2, Speaker, Save, Check, Plus, Trash2, Cpu, Power, Terminal } from 'lucide-react';
-import { AppConfig, SystemStatus, VolumeRule } from '../types/bell';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Volume2, Speaker, Save, Check, Plus, Trash2, Cpu, Power, Terminal, RefreshCw } from 'lucide-react';
+import { AppConfig, DetectedSerialPort, SystemStatus, VolumeRule } from '../types/bell';
 import { apiFetch } from '../utils/apiClient';
 
 interface VolumeViewProps {
@@ -43,8 +43,26 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
 
-  // Available audio devices from Linux
+  // Available audio devices & serial ports from Linux
   const [detectedDevices, setDetectedDevices] = useState<{ id: string; name: string }[]>([]);
+  const [detectedSerialPorts, setDetectedSerialPorts] = useState<DetectedSerialPort[]>([]);
+  const [isLoadingSerialPorts, setIsLoadingSerialPorts] = useState(false);
+
+  const fetchDetectedSerialPorts = useCallback(async () => {
+    setIsLoadingSerialPorts(true);
+    try {
+      const res = await apiFetch('/api/amplifier/ports');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && Array.isArray(data.ports)) {
+        setDetectedSerialPorts(data.ports);
+      }
+    } catch {
+      // ignore transient errors
+    } finally {
+      setIsLoadingSerialPorts(false);
+    }
+  }, []);
 
   useEffect(() => {
     apiFetch('/api/audio-devices')
@@ -55,7 +73,9 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
         }
       })
       .catch(() => {});
-  }, []);
+
+    void fetchDetectedSerialPorts();
+  }, [fetchDetectedSerialPorts]);
 
   const handleAddRule = () => {
     const newRule: VolumeRule = {
@@ -445,29 +465,62 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
-                Przykład: <code className="font-mono text-slate-200">/dev/tty1</code> (lub port szeregowy/USB np.{' '}
-                <code className="font-mono text-slate-200">/dev/ttyS0</code>,{' '}
-                <code className="font-mono text-slate-200">/dev/ttyUSB0</code>,{' '}
-                <code className="font-mono text-slate-200">/dev/ttyACM0</code>).
+                Wpisz ścieżkę urządzenia w <code className="font-mono text-slate-200">/dev/</code> lub wybierz wykryty port szeregowy poniżej.
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 mr-1">Przykłady ścieżek:</span>
-              {['/dev/tty1', '/dev/ttyS0', '/dev/ttyUSB0', '/dev/ttyACM0'].map((presetPath) => (
+            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-700/60 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-slate-300">
+                  Wykryte porty ({detectedSerialPorts.length}):
+                </span>
                 <button
-                  key={presetPath}
                   type="button"
-                  onClick={() => setAmplifierDevicePath(presetPath)}
-                  className={`px-2 py-0.5 rounded font-mono text-[11px] border transition-colors cursor-pointer ${
-                    amplifierDevicePath === presetPath
-                      ? 'bg-amber-400/15 border-amber-500/60 text-amber-300'
-                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
-                  }`}
+                  onClick={() => void fetchDetectedSerialPorts()}
+                  disabled={isLoadingSerialPorts}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] text-slate-300 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  {presetPath}
+                  <RefreshCw className={`w-3 h-3 text-amber-400 ${isLoadingSerialPorts ? 'animate-spin' : ''}`} />
+                  <span>{isLoadingSerialPorts ? 'Skanowanie...' : 'Odśwież porty'}</span>
                 </button>
-              ))}
+              </div>
+
+              {detectedSerialPorts.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {detectedSerialPorts.map((port) => {
+                    const isSelected = amplifierDevicePath === port.path;
+                    return (
+                      <button
+                        key={port.path}
+                        type="button"
+                        onClick={() => setAmplifierDevicePath(port.path)}
+                        title={
+                          port.byIdPath
+                            ? `${port.description} · stały link: ${port.byIdPath}`
+                            : port.description
+                        }
+                        className={`px-2.5 py-1 rounded-md text-left border transition-colors cursor-pointer flex items-center gap-2 ${
+                          isSelected
+                            ? 'bg-amber-400/15 border-amber-500/70 text-amber-300'
+                            : 'bg-slate-950/70 border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white'
+                        }`}
+                      >
+                        <span className="font-mono text-[11px] font-semibold">{port.path}</span>
+                        <span className="text-[10px] text-slate-400">{port.description}</span>
+                        {!port.writable && (
+                          <span className="text-[10px] text-rose-400 font-medium">(brak zapisu)</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-400">
+                  {isLoadingSerialPorts
+                    ? 'Skanowanie urządzeń szeregowych w systemie...'
+                    : 'Nie wykryto dostępnych portów szeregowych w systemie (np. ttyUSB, ttyACM, aktywne ttyS). Podłącz adapter lub wpisz ścieżkę ręcznie powyżej.'}
+                </p>
+              )}
             </div>
 
             <div className="pt-1 space-y-2">

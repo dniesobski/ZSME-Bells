@@ -143,6 +143,15 @@ export interface AmplifierStatus {
   hardwareAvailable: boolean;
 }
 
+export interface DetectedSerialPort {
+  path: string;
+  name: string;
+  description: string;
+  kind: 'usb_serial' | 'usb_acm' | 'serial_uart' | 'by_id';
+  byIdPath?: string | null;
+  writable: boolean;
+}
+
 export interface RadioPlaybackStatus {
   isPlaying: boolean;
   stationId: string | null;
@@ -162,6 +171,8 @@ export interface SystemMetricsPoint {
   ramTotalMb: number;
   loadAvg1m: number;
   cpuCores: number;
+  cpuTempC: number | null;
+  cpuTempSource?: string | null;
 }
 
 export interface SystemStatus {

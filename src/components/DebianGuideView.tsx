@@ -248,7 +248,7 @@ export const DebianGuideView: React.FC<DebianGuideViewProps> = ({ config, onImpo
   };
 
   const quickInstallCommand = `# 1. Zaktualizuj system Debian 13 i zainstaluj pakiety bazowe
-sudo apt update && sudo apt install -y curl wget git alsa-utils mpv pulseaudio
+sudo apt update && sudo apt install -y curl wget git alsa-utils mpv pulseaudio lm-sensors
 
 # 2. Pobierz i zainstaluj Node.js LTS
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
@@ -292,7 +292,7 @@ set -e
 
 echo "=== [1/5] Aktualizacja repozytoriów Debian 13 i instalacja audio ==="
 apt update
-apt install -y curl wget git alsa-utils mpv pulseaudio libasound2-dev
+apt install -y curl wget git alsa-utils mpv pulseaudio libasound2-dev lm-sensors
 
 echo "=== [2/5] Instalacja Node.js LTS (wersja 20+) ==="
 if ! command -v node >/dev/null 2>&1; then

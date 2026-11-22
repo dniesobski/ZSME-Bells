@@ -17,6 +17,7 @@ import {
   DebianGitConfig,
   DebianUpdateCheckResult,
   DebianUpdateJobStatus,
+  DetectedSerialPort,
   PermissionGroup,
   PermissionKey,
   RadioPlaybackStatus,
@@ -1129,6 +1130,179 @@ function getAmplifierStatus(): AmplifierStatus {
   };
 }
 
+function isDeviceWritable(devPath: string): boolean {
+  try {
+    fs.accessSync(devPath, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readSysfsSerialMeta(devName: string): string | null {
+  const candidateFiles = [
+    `/sys/class/tty/${devName}/device/../product`,
+    `/sys/class/tty/${devName}/device/../../product`,
+    `/sys/class/tty/${devName}/device/../interface`,
+  ];
+  let product: string | null = null;
+  for (const filePath of candidateFiles) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const val = fs.readFileSync(filePath, 'utf-8').trim();
+        if (val) {
+          product = val;
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  let manufacturer: string | null = null;
+  for (const mfgPath of [
+    `/sys/class/tty/${devName}/device/../manufacturer`,
+    `/sys/class/tty/${devName}/device/../../manufacturer`,
+  ]) {
+    try {
+      if (fs.existsSync(mfgPath)) {
+        const val = fs.readFileSync(mfgPath, 'utf-8').trim();
+        if (val) {
+          manufacturer = val;
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  if (manufacturer && product && !product.toLowerCase().includes(manufacturer.toLowerCase())) {
+    return `${manufacturer} ${product}`;
+  }
+  return product || manufacturer || null;
+}
+
+function parseProcSerialActivePorts(): Set<string> {
+  const active = new Set<string>();
+  try {
+    if (fs.existsSync('/proc/tty/driver/serial')) {
+      const content = fs.readFileSync('/proc/tty/driver/serial', 'utf-8');
+      for (const line of content.split('\n')) {
+        const match = line.match(/^(\d+):\s+uart:([^\s]+)/);
+        if (match && match[2] && match[2].toLowerCase() !== 'unknown') {
+          active.add(`ttyS${match[1]}`);
+        }
+      }
+    }
+  } catch {}
+  return active;
+}
+
+function detectSystemSerialPorts(): DetectedSerialPort[] {
+  const ports: DetectedSerialPort[] = [];
+  const byIdMap = new Map<string, { byIdPath: string; label: string }>();
+
+  // 1. Inspect /dev/serial/by-id/* symlinks for human-readable USB serial adapters
+  try {
+    const byIdDir = '/dev/serial/by-id';
+    if (fs.existsSync(byIdDir)) {
+      for (const entry of fs.readdirSync(byIdDir)) {
+        const byIdPath = `${byIdDir}/${entry}`;
+        const validatedById = validateAmplifierDevicePath(byIdPath);
+        if (!validatedById.ok) continue;
+        try {
+          const resolved = fs.realpathSync(validatedById.devicePath);
+          if (!resolved.startsWith('/dev/')) continue;
+          const cleanLabel = entry
+            .replace(/^usb-/, '')
+            .replace(/-if\d+(?:-port\d+)?$/, '')
+            .replace(/_/g, ' ')
+            .trim();
+          if (!byIdMap.has(resolved)) {
+            byIdMap.set(resolved, {
+              byIdPath: validatedById.devicePath,
+              label: cleanLabel || entry,
+            });
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  const activeProcSerial = parseProcSerialActivePorts();
+
+  // 2. Scan /dev for active serial / USB-serial / UART character devices
+  try {
+    if (fs.existsSync('/dev')) {
+      for (const entry of fs.readdirSync('/dev')) {
+        let kind: DetectedSerialPort['kind'] | null = null;
+        let baseDesc = '';
+
+        if (/^ttyUSB\d+$/.test(entry) || /^ttyXRUSB\d+$/.test(entry) || /^ttyMXUSB\d+$/.test(entry)) {
+          kind = 'usb_serial';
+          baseDesc = 'Adapter USB-Serial';
+        } else if (/^ttyACM\d+$/.test(entry)) {
+          kind = 'usb_acm';
+          baseDesc = 'Urządzenie USB CDC/ACM';
+        } else if (/^ttyAMA\d+$/.test(entry) || /^ttyTHS\d+$/.test(entry) || /^ttymxc\d+$/.test(entry) || /^ttyO\d+$/.test(entry)) {
+          kind = 'serial_uart';
+          baseDesc = 'Wbudowany port UART';
+        } else if (/^ttyS\d+$/.test(entry)) {
+          const hasSysDevice = fs.existsSync(`/sys/class/tty/${entry}/device`);
+          if (!hasSysDevice && !activeProcSerial.has(entry)) {
+            continue;
+          }
+          kind = 'serial_uart';
+          baseDesc = 'Port szeregowy RS-232';
+        } else if (/^cu\.[a-zA-Z0-9._-]+$/.test(entry) && !entry.includes('Bluetooth')) {
+          kind = 'serial_uart';
+          baseDesc = 'Port szeregowy';
+        }
+
+        if (!kind) continue;
+
+        const devPath = `/dev/${entry}`;
+        const validated = validateAmplifierDevicePath(devPath);
+        if (!validated.ok) continue;
+
+        try {
+          const stat = fs.statSync(validated.devicePath);
+          if (!stat.isCharacterDevice()) continue;
+        } catch {
+          continue;
+        }
+
+        const byIdInfo = byIdMap.get(validated.devicePath);
+        const sysMeta = readSysfsSerialMeta(entry);
+        const detail = sysMeta || byIdInfo?.label || null;
+        const description = detail ? `${baseDesc} (${detail})` : baseDesc;
+
+        ports.push({
+          path: validated.devicePath,
+          name: entry,
+          description,
+          kind,
+          byIdPath: byIdInfo?.byIdPath || null,
+          writable: isDeviceWritable(validated.devicePath),
+        });
+      }
+    }
+  } catch {}
+
+  const kindOrder: Record<DetectedSerialPort['kind'], number> = {
+    usb_serial: 0,
+    usb_acm: 1,
+    by_id: 2,
+    serial_uart: 3,
+  };
+
+  ports.sort((a, b) => {
+    const orderDiff = kindOrder[a.kind] - kindOrder[b.kind];
+    if (orderDiff !== 0) return orderDiff;
+    return a.name.localeCompare(b.name, undefined, { numeric: true });
+  });
+
+  return ports;
+}
+
 function writeAmplifierSignal(
   signal: '1' | '0',
   mode: 'auto' | 'manual',
@@ -1335,11 +1509,274 @@ function handleAmplifierScheduleTick(now: Date) {
   }
 }
 
-/* ===================== DEBIAN CPU & RAM TELEMETRY SAMPLER ===================== */
+/* ===================== DEBIAN CPU, RAM & TEMPERATURE TELEMETRY SAMPLER ===================== */
 const MAX_TELEMETRY_POINTS = 60;
 const systemMetricsHistory: SystemMetricsPoint[] = [];
 let latestSystemMetric: SystemMetricsPoint | null = null;
 let prevCpuTotals: { idle: number; total: number } | null = null;
+let latestCpuTemp: { tempC: number | null; source: string | null } = {
+  tempC: null,
+  source: null,
+};
+let isRefreshingCpuTemp = false;
+let lastCpuTempPollMs = 0;
+
+function scoreTempCandidate(chipName: string, labelName: string): number {
+  const chip = chipName.toLowerCase();
+  const label = labelName.toLowerCase();
+  let score = 0;
+
+  if (
+    chip.includes('coretemp') ||
+    chip.includes('k10temp') ||
+    chip.includes('zenpower') ||
+    chip.includes('fam15h') ||
+    chip.includes('cpu_thermal') ||
+    chip.includes('cpu-thermal') ||
+    chip.includes('soc_thermal') ||
+    chip.includes('x86_pkg_temp')
+  ) {
+    score += 120;
+  } else if (
+    chip.includes('acpitz') ||
+    chip.includes('thinkpad') ||
+    chip.includes('dell') ||
+    chip.includes('asus') ||
+    chip.includes('it87') ||
+    chip.includes('nct')
+  ) {
+    score += 40;
+  } else if (
+    chip.includes('nvme') ||
+    chip.includes('iwlwifi') ||
+    chip.includes('amdgpu') ||
+    chip.includes('radeon') ||
+    chip.includes('nouveau') ||
+    chip.includes('drivetemp') ||
+    chip.includes('spd')
+  ) {
+    score -= 80;
+  }
+
+  if (
+    label.includes('package id') ||
+    label === 'tctl' ||
+    label === 'tdie' ||
+    label.includes('cpu') ||
+    label.includes('x86_pkg_temp')
+  ) {
+    score += 70;
+  } else if (label.startsWith('core 0') || label.includes('peci') || label === 'soc') {
+    score += 45;
+  } else if (label.startsWith('core') || label === 'temp1') {
+    score += 25;
+  } else if (label.includes('composite') || label.includes('sensor') || label.includes('gpu') || label.includes('edge')) {
+    score -= 40;
+  }
+
+  return score;
+}
+
+function parseSensorsJsonOutput(rawJson: string): { tempC: number; source: string } | null {
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    let best: { score: number; tempC: number; source: string } | null = null;
+
+    for (const [chipName, chipData] of Object.entries(parsed)) {
+      if (!chipData || typeof chipData !== 'object') continue;
+      for (const [featureName, featureData] of Object.entries(chipData as Record<string, unknown>)) {
+        if (featureName === 'Adapter' || !featureData || typeof featureData !== 'object') continue;
+        for (const [metricKey, metricVal] of Object.entries(featureData as Record<string, unknown>)) {
+          if (!/^temp\d*_input$/i.test(metricKey)) continue;
+          const tempVal = typeof metricVal === 'number' ? metricVal : Number(metricVal);
+          if (!Number.isFinite(tempVal) || tempVal <= -40 || tempVal >= 150) continue;
+
+          const score = scoreTempCandidate(chipName, featureName);
+          if (score < 0) continue;
+
+          const rounded = Number(tempVal.toFixed(1));
+          const shortChip = chipName.split('-')[0] || chipName;
+          const source = `sensors (${shortChip}: ${featureName})`;
+          if (!best || score > best.score) {
+            best = { score, tempC: rounded, source };
+          }
+        }
+      }
+    }
+
+    return best ? { tempC: best.tempC, source: best.source } : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseSensorsTextOutput(rawText: string): { tempC: number; source: string } | null {
+  try {
+    const lines = rawText.split('\n');
+    let currentChip = '';
+    let best: { score: number; tempC: number; source: string } | null = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd();
+      if (!line.trim()) {
+        currentChip = '';
+        continue;
+      }
+      if (!currentChip && !line.includes(':') && !line.startsWith(' ')) {
+        currentChip = line.trim();
+        continue;
+      }
+      if (line.startsWith('Adapter:')) continue;
+
+      const tempMatch = line.match(/^([^:]+):\s*([+-]?\d+(?:\.\d+)?)\s*°?\s*C/i);
+      if (tempMatch && currentChip) {
+        const label = tempMatch[1].trim();
+        const tempVal = parseFloat(tempMatch[2]);
+        if (!Number.isFinite(tempVal) || tempVal <= -40 || tempVal >= 150) continue;
+
+        const score = scoreTempCandidate(currentChip, label);
+        if (score < 0) continue;
+
+        const shortChip = currentChip.split('-')[0] || currentChip;
+        const rounded = Number(tempVal.toFixed(1));
+        const source = `sensors (${shortChip}: ${label})`;
+        if (!best || score > best.score) {
+          best = { score, tempC: rounded, source };
+        }
+      }
+    }
+
+    return best ? { tempC: best.tempC, source: best.source } : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLinuxSysfsCpuTemp(): { tempC: number; source: string } | null {
+  let best: { score: number; tempC: number; source: string } | null = null;
+
+  try {
+    const hwmonRoot = '/sys/class/hwmon';
+    if (fs.existsSync(hwmonRoot)) {
+      const hwdirs = fs.readdirSync(hwmonRoot);
+      for (const dir of hwdirs) {
+        const dirPath = path.join(hwmonRoot, dir);
+        let chipName = dir;
+        try {
+          const namePath = path.join(dirPath, 'name');
+          if (fs.existsSync(namePath)) {
+            chipName = fs.readFileSync(namePath, 'utf-8').trim();
+          }
+          const entries = fs.readdirSync(dirPath);
+          for (const entry of entries) {
+            const inputMatch = entry.match(/^temp(\d+)_input$/);
+            if (!inputMatch) continue;
+            const idx = inputMatch[1];
+            const rawMilli = fs.readFileSync(path.join(dirPath, entry), 'utf-8').trim();
+            const milliVal = parseInt(rawMilli, 10);
+            if (!Number.isFinite(milliVal)) continue;
+            const tempC = Number((milliVal / 1000).toFixed(1));
+            if (tempC <= -40 || tempC >= 150) continue;
+
+            let label = `temp${idx}`;
+            const labelPath = path.join(dirPath, `temp${idx}_label`);
+            if (fs.existsSync(labelPath)) {
+              label = fs.readFileSync(labelPath, 'utf-8').trim() || label;
+            }
+            const score = scoreTempCandidate(chipName, label);
+            if (score < 0) continue;
+            if (!best || score > best.score) {
+              best = { score, tempC, source: `sysfs (${chipName}: ${label})` };
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  try {
+    const thermalRoot = '/sys/class/thermal';
+    if (fs.existsSync(thermalRoot)) {
+      const zones = fs.readdirSync(thermalRoot).filter((z) => z.startsWith('thermal_zone'));
+      for (const zone of zones) {
+        try {
+          const zonePath = path.join(thermalRoot, zone);
+          const tempPath = path.join(zonePath, 'temp');
+          if (!fs.existsSync(tempPath)) continue;
+          const rawMilli = fs.readFileSync(tempPath, 'utf-8').trim();
+          const milliVal = parseInt(rawMilli, 10);
+          if (!Number.isFinite(milliVal)) continue;
+          const tempC = Number((milliVal / 1000).toFixed(1));
+          if (tempC <= -40 || tempC >= 150) continue;
+
+          let zoneType = zone;
+          const typePath = path.join(zonePath, 'type');
+          if (fs.existsSync(typePath)) {
+            zoneType = fs.readFileSync(typePath, 'utf-8').trim() || zone;
+          }
+          const score = scoreTempCandidate(zoneType, zoneType);
+          if (score < 0) continue;
+          if (!best || score > best.score) {
+            best = { score, tempC, source: `thermal (${zoneType})` };
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  return best ? { tempC: best.tempC, source: best.source } : null;
+}
+
+async function refreshCpuTemperature(): Promise<void> {
+  if (isRefreshingCpuTemp) return;
+  const nowMs = Date.now();
+  if (nowMs - lastCpuTempPollMs < 1800) return;
+
+  isRefreshingCpuTemp = true;
+  lastCpuTempPollMs = nowMs;
+
+  try {
+    const jsonRes = await new Promise<{ ok: boolean; stdout: string }>((resolve) => {
+      execFile('sensors', ['-j'], { timeout: 2000, maxBuffer: 512 * 1024 }, (err, stdout) => {
+        resolve({ ok: !err && Boolean(stdout), stdout: stdout || '' });
+      });
+    });
+
+    if (jsonRes.ok) {
+      const parsed = parseSensorsJsonOutput(jsonRes.stdout);
+      if (parsed) {
+        latestCpuTemp = { tempC: parsed.tempC, source: parsed.source };
+        return;
+      }
+    }
+
+    const textRes = await new Promise<{ ok: boolean; stdout: string }>((resolve) => {
+      execFile('sensors', [], { timeout: 2000, maxBuffer: 512 * 1024 }, (err, stdout) => {
+        resolve({ ok: !err && Boolean(stdout), stdout: stdout || '' });
+      });
+    });
+
+    if (textRes.ok) {
+      const parsed = parseSensorsTextOutput(textRes.stdout);
+      if (parsed) {
+        latestCpuTemp = { tempC: parsed.tempC, source: parsed.source };
+        return;
+      }
+    }
+
+    const sysfsTemp = readLinuxSysfsCpuTemp();
+    if (sysfsTemp) {
+      latestCpuTemp = { tempC: sysfsTemp.tempC, source: sysfsTemp.source };
+      return;
+    }
+
+    latestCpuTemp = { tempC: null, source: null };
+  } finally {
+    isRefreshingCpuTemp = false;
+  }
+}
 
 function readCpuTotals(): { idle: number; total: number; cores: number } {
   const cpus = os.cpus();
@@ -1411,6 +1848,8 @@ function sampleSystemTelemetry(now: Date = new Date()): SystemMetricsPoint {
     ramTotalMb: mem.totalMb,
     loadAvg1m,
     cpuCores: currCpu.cores,
+    cpuTempC: latestCpuTemp.tempC,
+    cpuTempSource: latestCpuTemp.source,
   };
 
   latestSystemMetric = point;
@@ -1421,14 +1860,20 @@ function sampleSystemTelemetry(now: Date = new Date()): SystemMetricsPoint {
   return point;
 }
 
-// Initial boot sample
+// Initial boot sample (prime sensor reading asynchronously, fallback synchronously from sysfs)
+const initialSysfsTemp = readLinuxSysfsCpuTemp();
+if (initialSysfsTemp) {
+  latestCpuTemp = { tempC: initialSysfsTemp.tempC, source: initialSysfsTemp.source };
+}
 sampleSystemTelemetry(new Date());
+void refreshCpuTemperature();
 
 setInterval(async () => {
   const now = new Date();
   const currentSec = now.getSeconds();
 
-  // Sample real-time CPU & RAM metrics every second
+  // Refresh CPU temperature via sensors / sysfs non-blockingly and sample metrics every second
+  void refreshCpuTemperature();
   sampleSystemTelemetry(now);
 
   // Check amplifier power schedule every second
@@ -2244,6 +2689,20 @@ app.get('/api/audio-devices', requireAnyPermission(['volume_edit', 'debian_view'
     devices,
   });
 });
+
+// 10a. List detected Linux serial ports for Amplifier Controller (Protected)
+app.get(
+  '/api/amplifier/ports',
+  requireAnyPermission(['volume_edit', 'schedules_edit', 'manual_bell']),
+  (_req: Request, res: Response) => {
+    const ports = detectSystemSerialPorts();
+    res.json({
+      ports,
+      currentPath: config.amplifierDevicePath || '/dev/tty1',
+      scannedAt: new Date().toISOString(),
+    });
+  }
+);
 
 // 10b. Amplifier Power Controller (1 = ON, 0 = OFF, auto = clear manual override) (Protected)
 app.post(

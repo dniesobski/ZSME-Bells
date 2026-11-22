@@ -14,6 +14,7 @@ import {
   Activity,
   Cpu,
   MemoryStick,
+  Thermometer,
 } from 'lucide-react';
 import {
   Area,
@@ -80,8 +81,18 @@ const TelemetryTooltip: React.FC<TelemetryTooltipProps> = ({ active, payload, la
           {point.ramPercent.toFixed(1)}% ({formatRamAmount(point.ramUsedMb)} / {formatRamAmount(point.ramTotalMb)})
         </span>
       </div>
+      <div className="flex items-center justify-between gap-4">
+        <span className="flex items-center gap-1.5 text-rose-300">
+          <span className="w-2 h-2 rounded-full bg-rose-400 inline-block" />
+          Temperatura CPU:
+        </span>
+        <span className="font-mono font-bold tabular-nums text-white">
+          {typeof point.cpuTempC === 'number' ? `${point.cpuTempC.toFixed(1)}°C` : 'Brak czujnika'}
+        </span>
+      </div>
       <div className="text-[11px] text-slate-400 font-mono pt-0.5">
         Load avg (1m): {point.loadAvg1m.toFixed(2)} · Rdzenie: {point.cpuCores}
+        {point.cpuTempSource ? ` · ${point.cpuTempSource}` : ''}
       </div>
     </div>
   );
@@ -154,6 +165,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [status?.telemetry]);
 
   const latestMetric = status?.telemetry || metricsHistory[metricsHistory.length - 1] || null;
+  const hasTempData = metricsHistory.some(
+    (m) => typeof m.cpuTempC === 'number' && Number.isFinite(m.cpuTempC)
+  );
+  const currentTempC =
+    typeof latestMetric?.cpuTempC === 'number' && Number.isFinite(latestMetric.cpuTempC)
+      ? latestMetric.cpuTempC
+      : null;
 
   const activeProfile =
     config.schedules.find((s) => s.id === (status?.activeProfileId || config.activeProfileId)) ||
@@ -486,7 +504,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Real-time Debian CPU & RAM Performance Chart (Recharts) */}
+      {/* Real-time Debian CPU, Temperature & RAM Performance Chart (Recharts) */}
       <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-700/60">
           <div className="flex items-center gap-2.5">
@@ -495,10 +513,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                Wydajność Serwera Debian w Czasie Rzeczywistym (CPU i RAM)
+                Wydajność Serwera Debian w Czasie Rzeczywistym (CPU, RAM i Temperatura)
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Bieżące obciążenie procesora oraz zajętość pamięci operacyjnej z ostatnich 60 sekund
+                Bieżące obciążenie procesora, temperatura CPU (sensors) oraz zajętość pamięci z ostatnich 60 sekund
               </p>
             </div>
           </div>
@@ -513,6 +531,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {latestMetric && (
                 <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
                   ({latestMetric.cpuCores} rdzeni · load {latestMetric.loadAvg1m.toFixed(2)})
+                </span>
+              )}
+            </div>
+
+            <div
+              className="px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-700/70 flex items-center gap-2"
+              title={latestMetric?.cpuTempSource || 'Czujnik temperatury lm-sensors / sysfs'}
+            >
+              <Thermometer
+                className={`w-3.5 h-3.5 ${
+                  currentTempC === null
+                    ? 'text-slate-500'
+                    : currentTempC >= 80
+                    ? 'text-rose-400'
+                    : currentTempC >= 65
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}
+              />
+              <span className="text-slate-400">Temp. CPU:</span>
+              <span
+                className={`font-mono font-bold tabular-nums ${
+                  currentTempC === null
+                    ? 'text-slate-400'
+                    : currentTempC >= 80
+                    ? 'text-rose-400'
+                    : currentTempC >= 65
+                    ? 'text-amber-300'
+                    : 'text-emerald-300'
+                }`}
+              >
+                {currentTempC !== null ? `${currentTempC.toFixed(1)}°C` : 'Brak czujnika'}
+              </span>
+              {latestMetric?.cpuTempSource && (
+                <span className="text-[11px] text-slate-500 font-mono hidden xl:inline">
+                  ({latestMetric.cpuTempSource})
                 </span>
               )}
             </div>
@@ -535,7 +589,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="w-full h-[230px]">
           {metricsHistory.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-              <AreaChart data={metricsHistory} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+              <AreaChart
+                data={metricsHistory}
+                margin={{ top: 8, right: hasTempData ? 4 : 12, left: -16, bottom: 0 }}
+              >
                 <defs>
                   <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.35} />
@@ -544,6 +601,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <linearGradient id="ramGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.35} />
                     <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.0} />
+                  </linearGradient>
+                  <linearGradient id="tempGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#fb7185" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#fb7185" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
@@ -556,6 +617,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   minTickGap={28}
                 />
                 <YAxis
+                  yAxisId="percent"
                   domain={[0, 100]}
                   stroke="#94a3b8"
                   tick={{ fill: '#94a3b8', fontSize: 11 }}
@@ -563,8 +625,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   axisLine={false}
                   tickFormatter={(v) => `${v}%`}
                 />
+                <YAxis
+                  yAxisId="temp"
+                  orientation="right"
+                  hide={!hasTempData}
+                  domain={[0, (dataMax: number) => Math.max(100, Math.ceil((dataMax || 0) / 10) * 10)]}
+                  stroke="#94a3b8"
+                  tick={{ fill: '#fda4af', fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => `${v}°C`}
+                />
                 <Tooltip content={<TelemetryTooltip />} />
                 <Area
+                  yAxisId="percent"
                   type="monotone"
                   dataKey="cpuPercent"
                   name="CPU (%)"
@@ -575,6 +649,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   isAnimationActive={false}
                 />
                 <Area
+                  yAxisId="percent"
                   type="monotone"
                   dataKey="ramPercent"
                   name="RAM (%)"
@@ -582,6 +657,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   strokeWidth={2}
                   fillOpacity={1}
                   fill="url(#ramGradient)"
+                  isAnimationActive={false}
+                />
+                <Area
+                  yAxisId="temp"
+                  type="monotone"
+                  dataKey="cpuTempC"
+                  name="Temperatura CPU (°C)"
+                  stroke="#fb7185"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#tempGradient)"
+                  connectNulls
                   isAnimationActive={false}
                 />
               </AreaChart>
@@ -594,7 +681,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 pt-1">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-sm bg-amber-400 inline-block" />
               Obciążenie procesora (CPU %)
@@ -602,6 +689,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-sm bg-sky-400 inline-block" />
               Wykorzystanie pamięci RAM (%)
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm bg-rose-400 inline-block" />
+              Temperatura CPU (°C){!hasTempData && ' · brak czujnika sensors/sysfs'}
             </span>
           </div>
           <span className="font-mono text-slate-500 tabular-nums">
