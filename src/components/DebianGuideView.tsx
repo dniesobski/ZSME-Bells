@@ -255,8 +255,8 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
 sudo apt install -y nodejs
 
 # 3. Sklonuj aplikację do katalogu /opt/harmonia-bell
-sudo mkdir -p /opt/harmonia-bell
-sudo chown $USER:$USER /opt/harmonia-bell
+sudo git clone https://github.com/dniesobski/ZSME-Bells.git /opt/harmonia-bell
+sudo chown -R $USER:$USER /opt/harmonia-bell
 cd /opt/harmonia-bell
 
 # 4. Zainstaluj biblioteki i uruchom
@@ -440,13 +440,13 @@ echo "Status: systemctl status harmonia-bell"
           <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
             <div className="md:col-span-7">
               <label className="block text-[11px] text-slate-400 mb-1">
-                Adres URL repozytorium (HTTPS lub SSH)
+                Adres URL repozytorium (HTTPS, SSH lub właściciel/repozytorium)
               </label>
               <input
                 type="text"
                 value={gitUrlInput}
                 onChange={(e) => setGitUrlInput(e.target.value)}
-                placeholder="https://github.com/twoja-szkola/harmonia-bell.git"
+                placeholder="https://github.com/dniesobski/ZSME-Bells.git"
                 disabled={isSavingGitConfig || updateJob?.state === 'running'}
                 className="w-full px-3 py-1.5 text-xs text-slate-100 bg-slate-950 border border-slate-700 rounded-lg focus:outline-none focus:border-amber-400 placeholder:text-slate-600 font-mono disabled:opacity-50"
               />

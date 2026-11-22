@@ -2459,27 +2459,51 @@ function runCommandFile(
     );
   });
 }
+function runGitCommand(
+  args: string[],
+  timeoutMs: number = 30000
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return runCommandFile('git', ['-c', `safe.directory=${process.cwd()}`, ...args], timeoutMs);
+}
+
+const DEFAULT_GIT_REPO_URL = 'https://github.com/dniesobski/ZSME-Bells.git';
+const DEFAULT_GIT_BRANCH = 'main';
 
 function loadDebianGitConfig(): DebianGitConfig | null {
   try {
-    if (!fs.existsSync(GIT_CONFIG_FILE)) return null;
+    if (!fs.existsSync(GIT_CONFIG_FILE)) {
+      return {
+        repoUrl: DEFAULT_GIT_REPO_URL,
+        branch: DEFAULT_GIT_BRANCH,
+        updatedAt: new Date(0).toISOString(),
+      };
+    }
     const parsed = JSON.parse(fs.readFileSync(GIT_CONFIG_FILE, 'utf-8'));
+    if (parsed?.disconnected === true) {
+      return null;
+    }
     if (typeof parsed?.repoUrl === 'string' && parsed.repoUrl.trim()) {
       return {
         repoUrl: parsed.repoUrl.trim(),
-        branch: typeof parsed.branch === 'string' && parsed.branch.trim() ? parsed.branch.trim() : 'main',
+        branch: typeof parsed.branch === 'string' && parsed.branch.trim() ? parsed.branch.trim() : DEFAULT_GIT_BRANCH,
         updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
       };
     }
   } catch {}
-  return null;
+  return {
+    repoUrl: DEFAULT_GIT_REPO_URL,
+    branch: DEFAULT_GIT_BRANCH,
+    updatedAt: new Date(0).toISOString(),
+  };
 }
 
 function saveDebianGitConfig(cfg: DebianGitConfig | null) {
   if (!cfg) {
-    if (fs.existsSync(GIT_CONFIG_FILE)) {
-      fs.unlinkSync(GIT_CONFIG_FILE);
-    }
+    fs.writeFileSync(
+      GIT_CONFIG_FILE,
+      JSON.stringify({ disconnected: true, updatedAt: new Date().toISOString() }, null, 2),
+      'utf-8'
+    );
     return;
   }
   fs.writeFileSync(GIT_CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf-8');
@@ -2512,12 +2536,18 @@ function validateGitRepoInput(
   if (typeof rawUrl !== 'string') {
     return { ok: false, error: 'Podaj poprawny adres URL repozytorium Git.' };
   }
-  const repoUrl = rawUrl.trim();
+  let repoUrl = rawUrl.trim();
   if (!repoUrl || repoUrl.length > 500) {
     return { ok: false, error: 'Adres URL repozytorium jest wymagany (maks. 500 znaków).' };
   }
   if (repoUrl.startsWith('-') || /[\s"'`$;|&<>\\]/.test(repoUrl)) {
     return { ok: false, error: 'Adres repozytorium zawiera niedozwolone znaki.' };
+  }
+
+  // Allow GitHub shorthand like "dniesobski/ZSME-Bells"
+  if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(repoUrl) && !repoUrl.includes('..')) {
+    const cleanRepo = repoUrl.endsWith('.git') ? repoUrl : `${repoUrl}.git`;
+    repoUrl = `https://github.com/${cleanRepo}`;
   }
 
   const scpMatch = repoUrl.match(/^git@([a-zA-Z0-9.-]+):([a-zA-Z0-9._\/-]+)$/);
@@ -2533,7 +2563,7 @@ function validateGitRepoInput(
     } catch {
       return {
         ok: false,
-        error: 'Nieprawidłowy format URL. Użyj adresu HTTPS (np. https://github.com/uzytkownik/projekt.git) lub SSH (git@...).',
+        error: 'Nieprawidłowy format URL. Użyj adresu HTTPS (np. https://github.com/dniesobski/ZSME-Bells.git) lub ścieżki użytkownik/repozytorium.',
       };
     }
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:' && parsed.protocol !== 'ssh:') {
@@ -2546,7 +2576,7 @@ function validateGitRepoInput(
       };
     }
     if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname.includes('..')) {
-      return { ok: false, error: 'Adres URL musi wskazywać konkretne repozytorium (np. /uzytkownik/repo.git).' };
+      return { ok: false, error: 'Adres URL musi wskazywać konkretne repozytorium (np. /dniesobski/ZSME-Bells.git).' };
     }
   }
 
@@ -2649,12 +2679,45 @@ async function inspectGitUpdateStatus(savedConfig: DebianGitConfig | null): Prom
       : 'Brak skonfigurowanego repozytorium Git. Wklej link do repozytorium powyżej, aby włączyć aktualizacje aplikacji.',
   };
 
-  const gitInside = await runCommandFile('git', ['rev-parse', '--is-inside-work-tree'], 4000);
+  const gitInside = await runGitCommand(['rev-parse', '--is-inside-work-tree'], 4000);
   if (!gitInside.ok || gitInside.stdout !== 'true') {
+    if (savedConfig?.repoUrl) {
+      const symrefRes = await runGitCommand(['ls-remote', '--symref', savedConfig.repoUrl, 'HEAD'], 12000);
+      if (symrefRes.ok) {
+        const symMatch = symrefRes.stdout.match(/^ref:\s+refs\/heads\/([^\s]+)\s+HEAD/m);
+        const detectedBranch = symMatch?.[1] || savedConfig.branch || DEFAULT_GIT_BRANCH;
+        const headShaMatch = symrefRes.stdout.match(/^([0-9a-f]{7,40})\s+HEAD/m);
+        const remoteCommit = headShaMatch ? headShaMatch[1].slice(0, 7) : null;
+        return {
+          available: true,
+          hasRemote: true,
+          repoUrl: savedConfig.repoUrl,
+          branch: detectedBranch,
+          currentCommit: null,
+          remoteCommit,
+          commitsBehind: 1,
+          latestMessage: null,
+          updateAvailable: true,
+          note: `Połączono ze zdalnym repozytorium (${savedConfig.repoUrl}, gałąź ${detectedBranch}). Gotowe do pobrania i synchronizacji.`,
+        };
+      }
+      return {
+        available: true,
+        hasRemote: true,
+        repoUrl: savedConfig.repoUrl,
+        branch: savedConfig.branch,
+        currentCommit: null,
+        remoteCommit: null,
+        commitsBehind: 0,
+        latestMessage: null,
+        updateAvailable: false,
+        note: `Nie udało się pobrać informacji ze zdalnego repozytorium (${savedConfig.repoUrl}): ${symrefRes.stderr || 'brak dostępu lub repozytorium nie istnieje'}`,
+      };
+    }
     return gitInfo;
   }
 
-  const remoteListRes = await runCommandFile('git', ['remote'], 4000);
+  const remoteListRes = await runGitCommand(['remote'], 4000);
   const remotes = remoteListRes.ok
     ? remoteListRes.stdout.split('\n').map((r) => r.trim()).filter(Boolean)
     : [];
@@ -2663,26 +2726,26 @@ async function inspectGitUpdateStatus(savedConfig: DebianGitConfig | null): Prom
 
   let repoUrl: string | null = savedConfig?.repoUrl || null;
   if (remoteName) {
-    const urlRes = await runCommandFile('git', ['remote', 'get-url', remoteName], 4000);
+    const urlRes = await runGitCommand(['remote', 'get-url', remoteName], 4000);
     if (urlRes.ok && urlRes.stdout) {
       repoUrl = urlRes.stdout;
     }
   }
 
-  const headExistsRes = await runCommandFile('git', ['rev-parse', '--verify', 'HEAD'], 4000);
+  const headExistsRes = await runGitCommand(['rev-parse', '--verify', 'HEAD'], 4000);
   const headExists = headExistsRes.ok;
 
   let currentBranch: string | null = savedConfig?.branch || null;
   let currentCommit: string | null = null;
   if (headExists) {
-    const branchRes = await runCommandFile('git', ['rev-parse', '--abbrev-ref', 'HEAD'], 4000);
-    const headRes = await runCommandFile('git', ['rev-parse', '--short', 'HEAD'], 4000);
+    const branchRes = await runGitCommand(['rev-parse', '--abbrev-ref', 'HEAD'], 4000);
+    const headRes = await runGitCommand(['rev-parse', '--short', 'HEAD'], 4000);
     if (branchRes.ok && branchRes.stdout && branchRes.stdout !== 'HEAD') {
       currentBranch = savedConfig?.branch || branchRes.stdout;
     }
     currentCommit = headRes.ok ? headRes.stdout : null;
   } else {
-    const symRes = await runCommandFile('git', ['symbolic-ref', '--short', 'HEAD'], 4000);
+    const symRes = await runGitCommand(['symbolic-ref', '--short', 'HEAD'], 4000);
     if (symRes.ok && symRes.stdout) {
       currentBranch = savedConfig?.branch || symRes.stdout;
     }
@@ -2705,14 +2768,14 @@ async function inspectGitUpdateStatus(savedConfig: DebianGitConfig | null): Prom
 
   if (hasRemote && remoteName) {
     const fetchArgs = currentBranch ? ['fetch', '--quiet', remoteName, currentBranch] : ['fetch', '--quiet'];
-    const fetchRes = await runCommandFile('git', fetchArgs, 15000);
+    const fetchRes = await runGitCommand(fetchArgs, 15000);
     if (fetchRes.ok) {
       const targetRef = currentBranch ? `${remoteName}/${currentBranch}` : '@{u}';
-      const upstreamRes = await runCommandFile('git', ['rev-parse', '--short', targetRef], 4000);
-      const msgRes = await runCommandFile('git', ['log', '-1', '--pretty=%s', targetRef], 4000);
+      const upstreamRes = await runGitCommand(['rev-parse', '--short', targetRef], 4000);
+      const msgRes = await runGitCommand(['log', '-1', '--pretty=%s', targetRef], 4000);
 
       if (headExists && upstreamRes.ok) {
-        const behindRes = await runCommandFile('git', ['rev-list', '--count', `HEAD..${targetRef}`], 4000);
+        const behindRes = await runGitCommand(['rev-list', '--count', `HEAD..${targetRef}`], 4000);
         const commitsBehind = behindRes.ok ? parseInt(behindRes.stdout, 10) || 0 : 0;
 
         gitInfo.remoteCommit = upstreamRes.stdout;
@@ -2833,21 +2896,33 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
 
     if (target === 'all' || target === 'app') {
       appendUpdateLog('Sprawdzanie repozytorium aplikacji HarmoniaBell...');
+      const savedGitConfig = loadDebianGitConfig();
+      const gitInsidePre = await runGitCommand(['rev-parse', '--is-inside-work-tree'], 4000);
+      if ((!gitInsidePre.ok || gitInsidePre.stdout !== 'true') && savedGitConfig?.repoUrl) {
+        appendUpdateLog(`Inicjowanie lokalnego repozytorium dla źródła: ${savedGitConfig.repoUrl}...`);
+        const initRes = await runGitCommand(['init'], 5000);
+        if (!initRes.ok) {
+          throw new Error(`Błąd inicjalizacji Git: ${initRes.stderr}`);
+        }
+        await runGitCommand(['symbolic-ref', 'HEAD', `refs/heads/${savedGitConfig.branch || DEFAULT_GIT_BRANCH}`], 4000);
+        ensureDataExcludedFromGit();
+        await runGitCommand(['remote', 'add', 'origin', savedGitConfig.repoUrl], 4000);
+      }
+
       const check = await performDebianUpdateCheck({ checkApt: false });
 
       if (check.git.available && check.git.hasRemote) {
         const targetBranch = check.git.branch || 'main';
-        const headExistsRes = await runCommandFile('git', ['rev-parse', '--verify', 'HEAD'], 4000);
+        const headExistsRes = await runGitCommand(['rev-parse', '--verify', 'HEAD'], 4000);
 
         if (!headExistsRes.ok) {
           ensureDataExcludedFromGit();
           appendUpdateLog(`Pierwsza synchronizacja aplikacji z gałęzi ${targetBranch}...`);
-          const fetchRes = await runCommandFile('git', ['fetch', 'origin', targetBranch], 60000);
+          const fetchRes = await runGitCommand(['fetch', 'origin', targetBranch], 60000);
           if (!fetchRes.ok) {
             throw new Error(`Błąd pobierania repozytorium: ${fetchRes.stderr || fetchRes.stdout}`);
           }
-          const checkoutRes = await runCommandFile(
-            'git',
+          const checkoutRes = await runGitCommand(
             ['checkout', '-f', '-B', targetBranch, `origin/${targetBranch}`],
             60000
           );
@@ -2858,7 +2933,7 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
           appFilesChanged = true;
         } else if (check.git.updateAvailable) {
           appendUpdateLog(`Pobieranie zmian z Git (${check.git.commitsBehind} nowych commitów)...`);
-          const pull = await runCommandFile('git', ['pull', '--ff-only', 'origin', targetBranch], 60000);
+          const pull = await runGitCommand(['pull', '--ff-only', 'origin', targetBranch], 60000);
           appendUpdateLog(pull.stdout || pull.stderr || 'git pull zakończony.');
           if (!pull.ok) {
             throw new Error(`Błąd git pull: ${pull.stderr || pull.stdout}`);
@@ -2963,7 +3038,7 @@ app.post('/api/debian/git-config', requireAnyPermission(['debian_view']), async 
     let resolvedBranch = validated.branch;
 
     // Verify remote repository accessibility and detect default branch if omitted
-    const symrefRes = await runCommandFile('git', ['ls-remote', '--symref', repoUrl, 'HEAD'], 15000);
+    const symrefRes = await runGitCommand(['ls-remote', '--symref', repoUrl, 'HEAD'], 15000);
     if (!symrefRes.ok) {
       return res.status(400).json({
         success: false,
@@ -2975,7 +3050,7 @@ app.post('/api/debian/git-config', requireAnyPermission(['debian_view']), async 
       const symMatch = symrefRes.stdout.match(/^ref:\s+refs\/heads\/([^\s]+)\s+HEAD/m);
       resolvedBranch = symMatch?.[1] || 'main';
     } else {
-      const branchCheck = await runCommandFile('git', ['ls-remote', '--heads', repoUrl, resolvedBranch], 12000);
+      const branchCheck = await runGitCommand(['ls-remote', '--heads', repoUrl, resolvedBranch], 12000);
       if (!branchCheck.ok || !branchCheck.stdout) {
         return res.status(400).json({
           success: false,
@@ -2984,26 +3059,26 @@ app.post('/api/debian/git-config', requireAnyPermission(['debian_view']), async 
       }
     }
 
-    const gitInside = await runCommandFile('git', ['rev-parse', '--is-inside-work-tree'], 4000);
+    const gitInside = await runGitCommand(['rev-parse', '--is-inside-work-tree'], 4000);
     if (!gitInside.ok || gitInside.stdout !== 'true') {
-      const initRes = await runCommandFile('git', ['init'], 5000);
+      const initRes = await runGitCommand(['init'], 5000);
       if (!initRes.ok) {
         return res.status(500).json({
           success: false,
           error: `Nie udało się zainicjalizować repozytorium Git: ${initRes.stderr}`,
         });
       }
-      await runCommandFile('git', ['symbolic-ref', 'HEAD', `refs/heads/${resolvedBranch}`], 4000);
+      await runGitCommand(['symbolic-ref', 'HEAD', `refs/heads/${resolvedBranch}`], 4000);
     }
 
     ensureDataExcludedFromGit();
 
-    const remotesRes = await runCommandFile('git', ['remote'], 4000);
+    const remotesRes = await runGitCommand(['remote'], 4000);
     const remotes = remotesRes.ok ? remotesRes.stdout.split('\n').map((r) => r.trim()) : [];
     const remoteCmd = remotes.includes('origin')
       ? ['remote', 'set-url', 'origin', repoUrl]
       : ['remote', 'add', 'origin', repoUrl];
-    const setRemoteRes = await runCommandFile('git', remoteCmd, 4000);
+    const setRemoteRes = await runGitCommand(remoteCmd, 4000);
     if (!setRemoteRes.ok) {
       return res.status(500).json({
         success: false,
@@ -3011,7 +3086,7 @@ app.post('/api/debian/git-config', requireAnyPermission(['debian_view']), async 
       });
     }
 
-    await runCommandFile('git', ['fetch', '--depth=1', 'origin', resolvedBranch], 20000);
+    await runGitCommand(['fetch', '--depth=1', 'origin', resolvedBranch], 20000);
 
     const newConfig: DebianGitConfig = {
       repoUrl,
@@ -3035,12 +3110,12 @@ app.post('/api/debian/git-config', requireAnyPermission(['debian_view']), async 
 app.delete('/api/debian/git-config', requireAnyPermission(['debian_view']), async (_req: Request, res: Response) => {
   try {
     saveDebianGitConfig(null);
-    const gitInside = await runCommandFile('git', ['rev-parse', '--is-inside-work-tree'], 4000);
+    const gitInside = await runGitCommand(['rev-parse', '--is-inside-work-tree'], 4000);
     if (gitInside.ok && gitInside.stdout === 'true') {
-      const remotesRes = await runCommandFile('git', ['remote'], 4000);
+      const remotesRes = await runGitCommand(['remote'], 4000);
       const remotes = remotesRes.ok ? remotesRes.stdout.split('\n').map((r) => r.trim()) : [];
       if (remotes.includes('origin')) {
-        await runCommandFile('git', ['remote', 'remove', 'origin'], 4000);
+        await runGitCommand(['remote', 'remove', 'origin'], 4000);
       }
     }
     const checkResult = await performDebianUpdateCheck({ checkApt: false });
