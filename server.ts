@@ -3482,8 +3482,20 @@ function parseRemoteBellsHtml(
   return results.sort((a, b) => a.filename.localeCompare(b.filename, 'pl'));
 }
 
+function normalizeRemoteDirectoryUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  const parsed = new URL(trimmed);
+  if (!parsed.pathname.endsWith('/') && !parsed.search && !parsed.hash) {
+    const lastSeg = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    if (!lastSeg.includes('.')) {
+      parsed.pathname = `${parsed.pathname}/`;
+    }
+  }
+  return parsed.toString();
+}
+
 async function scanRemoteBellsDirectory(rawUrl: string): Promise<RemoteBellScanResult> {
-  const normalizedInput = rawUrl.trim().endsWith('/') ? rawUrl.trim() : `${rawUrl.trim()}/`;
+  const normalizedInput = normalizeRemoteDirectoryUrl(rawUrl);
   const { response, finalUrl } = await fetchWithSafeRedirects(normalizedInput, 15000);
   if (!response.ok) {
     if (response.status === 403) {
@@ -3662,7 +3674,14 @@ app.post('/api/sounds/remote/scan', requireAnyPermission(['sounds_manage']), asy
         ? req.body.url.trim()
         : config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL;
 
-    const result = await scanRemoteBellsDirectory(rawUrl);
+    const safeNormalized = normalizeRemoteDirectoryUrl(rawUrl);
+    await assertSafePublicHttpUrl(safeNormalized);
+    if (config.remoteBellsUrl !== safeNormalized) {
+      config.remoteBellsUrl = safeNormalized;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    }
+
+    const result = await scanRemoteBellsDirectory(safeNormalized);
     if (config.remoteBellsUrl !== result.directoryUrl) {
       config.remoteBellsUrl = result.directoryUrl;
       fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
@@ -3764,9 +3783,18 @@ app.post('/api/sounds/remote/sync', requireAnyPermission(['sounds_manage']), asy
         : config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL;
     const removeStale = req.body?.removeStale !== false;
 
-    const initialScan = await scanRemoteBellsDirectory(rawUrl);
-    config.remoteBellsUrl = initialScan.directoryUrl;
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    const safeNormalized = normalizeRemoteDirectoryUrl(rawUrl);
+    await assertSafePublicHttpUrl(safeNormalized);
+    if (config.remoteBellsUrl !== safeNormalized) {
+      config.remoteBellsUrl = safeNormalized;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    }
+
+    const initialScan = await scanRemoteBellsDirectory(safeNormalized);
+    if (config.remoteBellsUrl !== initialScan.directoryUrl) {
+      config.remoteBellsUrl = initialScan.directoryUrl;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    }
 
     let added = 0;
     let skippedExisting = 0;
@@ -4871,6 +4899,18 @@ async function inspectGitUpdateStatus(savedConfig: DebianGitConfig | null): Prom
   return gitInfo;
 }
 
+function parseAptUpgradableLines(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l) return false;
+      if (/^(listing|wypisywanie|wyświetlanie|warning|uwaga)\b/i.test(l)) return false;
+      // Real `apt list --upgradable` entries follow: "<pkg>/<suite> <version> <arch> [upgradable from: ...]"
+      return /^[a-z0-9][a-z0-9+.:_-]*\/[^\s]+\s+\S+/i.test(l);
+    });
+}
+
 async function performDebianUpdateCheck(options?: { checkApt?: boolean }): Promise<DebianUpdateCheckResult> {
   const checkApt = options?.checkApt !== false;
   const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
@@ -4904,10 +4944,7 @@ async function performDebianUpdateCheck(options?: { checkApt?: boolean }): Promi
       }
       const listRes = await runCommandFile('apt', ['list', '--upgradable'], 10000);
       if (listRes.ok) {
-        const lines = listRes.stdout
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith('Listing...') && !l.startsWith('Wyświetlanie'));
+        const lines = parseAptUpgradableLines(listRes.stdout);
         aptInfo.upgradableCount = lines.length;
         aptInfo.upgradablePackages = lines.slice(0, 15).map((l) => l.split('/')[0]);
         aptInfo.note = !aptPriv.isRoot

@@ -421,7 +421,7 @@
     "lessonColor": "#f59e0b",
     "breakColor": "#10b981"
   },
-  "remoteBellsUrl": "https://sekretariat.zsme.pl/bells/",
+  "remoteBellsUrl": "https://sekretariat.zsme.pl/bells_baza/",
   "bellRandomizer": {
     "enabled": false,
     "drawDayOfWeek": 0,

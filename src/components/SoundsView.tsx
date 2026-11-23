@@ -104,6 +104,9 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
   const [remoteUrl, setRemoteUrl] = useState<string>(
     config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL
   );
+  const prevConfigRemoteUrlRef = useRef<string | undefined>(config.remoteBellsUrl);
+  const [isSavingRemoteUrl, setIsSavingRemoteUrl] = useState(false);
+  const [remoteUrlSavedOk, setRemoteUrlSavedOk] = useState(false);
   const [scanResult, setScanResult] = useState<RemoteBellScanResult | null>(null);
   const [selectedRemoteUrls, setSelectedRemoteUrls] = useState<string[]>([]);
   const [removeStaleOnSync, setRemoveStaleOnSync] = useState<boolean>(true);
@@ -140,8 +143,12 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
   const customWeeksInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (config.remoteBellsUrl) {
+    if (
+      config.remoteBellsUrl &&
+      config.remoteBellsUrl !== prevConfigRemoteUrlRef.current
+    ) {
       setRemoteUrl(config.remoteBellsUrl);
+      prevConfigRemoteUrlRef.current = config.remoteBellsUrl;
     }
   }, [config.remoteBellsUrl]);
 
@@ -243,6 +250,40 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
     }
   };
 
+  const handleSaveRemoteUrl = async (overrideUrl?: string) => {
+    const cleanUrl = (overrideUrl ?? remoteUrl).trim();
+    if (!/^https?:\/\//i.test(cleanUrl)) {
+      setRemoteStatusMsg({
+        type: 'error',
+        text: 'Adres katalogu musi zaczynać się od http:// lub https://.',
+      });
+      return;
+    }
+    setIsSavingRemoteUrl(true);
+    setRemoteStatusMsg(null);
+    try {
+      await onSaveConfig({
+        ...config,
+        remoteBellsUrl: cleanUrl,
+      });
+      setRemoteUrl(cleanUrl);
+      prevConfigRemoteUrlRef.current = cleanUrl;
+      setRemoteUrlSavedOk(true);
+      setTimeout(() => setRemoteUrlSavedOk(false), 2500);
+      setRemoteStatusMsg({
+        type: 'success',
+        text: `Zapisano adres katalogu WWW: ${cleanUrl}`,
+      });
+    } catch (err: any) {
+      setRemoteStatusMsg({
+        type: 'error',
+        text: err?.message || 'Nie udało się zapisać adresu katalogu.',
+      });
+    } finally {
+      setIsSavingRemoteUrl(false);
+    }
+  };
+
   // Scan remote directory
   const handleScanRemote = async () => {
     setIsScanningRemote(true);
@@ -255,11 +296,14 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
+        await onRefreshSounds();
         throw new Error(data?.error || 'Nie udało się odczytać katalogu internetowego.');
       }
       const result: RemoteBellScanResult = data.result;
       setScanResult(result);
       setRemoteUrl(result.directoryUrl);
+      prevConfigRemoteUrlRef.current = result.directoryUrl;
+      await onRefreshSounds();
       // Pre-select new files by default for convenience
       const newUrls = result.files.filter((f) => !f.alreadyOnController).map((f) => f.url);
       setSelectedRemoteUrls(newUrls);
@@ -340,11 +384,13 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
+        await onRefreshSounds();
         throw new Error(data?.error || 'Błąd synchronizacji ze stroną.');
       }
       if (data.result) {
         setScanResult(data.result);
         setRemoteUrl(data.result.directoryUrl);
+        prevConfigRemoteUrlRef.current = data.result.directoryUrl;
       }
       setSelectedRemoteUrls([]);
       await onRefreshSounds();
@@ -713,12 +759,24 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
               type="url"
               value={remoteUrl}
               onChange={(e) => setRemoteUrl(e.target.value)}
-              placeholder="https://sekretariat.zsme.pl/bells/"
+              placeholder="https://sekretariat.zsme.pl/bells_baza/"
               className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-amber-200 font-mono text-xs focus:outline-none focus:border-amber-400"
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={isSavingRemoteUrl || isScanningRemote || isSyncingRemote || !remoteUrl.trim()}
+              onClick={() => handleSaveRemoteUrl()}
+              className="px-3.5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shadow-sm"
+            >
+              {remoteUrlSavedOk ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+              <span>
+                {isSavingRemoteUrl ? 'Zapisywanie...' : remoteUrlSavedOk ? 'Zapisano!' : 'Zapisz adres'}
+              </span>
+            </button>
+
             <button
               type="button"
               disabled={isScanningRemote || isSyncingRemote || !remoteUrl.trim()}
@@ -739,6 +797,31 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
               <span>{isSyncingRemote ? 'Synchronizowanie...' : 'Synchronizuj ze stroną'}</span>
             </button>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>
+              Zapisany adres:{' '}
+              <span className="font-mono text-slate-300">
+                {config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL}
+              </span>
+            </span>
+            {remoteUrl.trim() !== (config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL) && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-950/70 border border-amber-700/70 text-amber-300">
+                Niezapisana zmiana adresu
+              </span>
+            )}
+          </div>
+          {remoteUrl.trim() !== DEFAULT_REMOTE_BELLS_URL && (
+            <button
+              type="button"
+              onClick={() => setRemoteUrl(DEFAULT_REMOTE_BELLS_URL)}
+              className="text-sky-400 hover:text-sky-300 underline cursor-pointer"
+            >
+              Przywróć domyślny ({DEFAULT_REMOTE_BELLS_URL})
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs">

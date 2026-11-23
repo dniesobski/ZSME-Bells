@@ -1,6 +1,6 @@
 import { AppConfig, BellRandomizerConfig, RadioStation, ScheduleProfile, SchoolHoliday, TvDisplayConfig } from '../types/bell';
 
-export const DEFAULT_REMOTE_BELLS_URL = 'https://sekretariat.zsme.pl/bells/';
+export const DEFAULT_REMOTE_BELLS_URL = 'https://sekretariat.zsme.pl/bells_baza/';
 
 export const DEFAULT_BELL_RANDOMIZER_CONFIG: BellRandomizerConfig = {
   enabled: false,
