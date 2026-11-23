@@ -1,4 +1,21 @@
-import { AppConfig, RadioStation, ScheduleProfile, SchoolHoliday, TvDisplayConfig } from '../types/bell';
+import { AppConfig, BellRandomizerConfig, RadioStation, ScheduleProfile, SchoolHoliday, TvDisplayConfig } from '../types/bell';
+
+export const DEFAULT_REMOTE_BELLS_URL = 'https://sekretariat.zsme.pl/bells/';
+
+export const DEFAULT_BELL_RANDOMIZER_CONFIG: BellRandomizerConfig = {
+  enabled: false,
+  drawDayOfWeek: 0, // Niedziela
+  drawTime: '18:00',
+  activeDays: [1, 2, 3, 4, 5],
+  sourceMode: 'all_custom',
+  selectedSoundIds: [],
+  avoidRepeatsInWeek: true,
+  noRepeatWeeks: 4,
+  applyToWarningBell: false,
+  lastDrawnAt: null,
+  lastAutoDrawMarker: null,
+  weekAssignments: {},
+};
 
 export const DEFAULT_TV_DISPLAY_CONFIG: TvDisplayConfig = {
   headerTitle: 'Zespół Szkół - Radiowęzeł Szkolny',
@@ -400,4 +417,6 @@ export const INITIAL_CONFIG: AppConfig = {
     },
   ],
   tvDisplay: DEFAULT_TV_DISPLAY_CONFIG,
+  remoteBellsUrl: DEFAULT_REMOTE_BELLS_URL,
+  bellRandomizer: DEFAULT_BELL_RANDOMIZER_CONFIG,
 };

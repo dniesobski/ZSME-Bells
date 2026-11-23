@@ -318,6 +318,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <span>Melodia:</span>
                   <span className="text-amber-300 font-medium">{status.nextBell.soundName}</span>
                 </div>
+                {status.dailyRandomBell?.enabled && status.dailyRandomBell.soundName && (
+                  <div className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/70 text-[11px] text-emerald-300">
+                    <span>Losowanie dnia:</span>
+                    <strong className="font-semibold">{status.dailyRandomBell.soundName}</strong>
+                  </div>
+                )}
                 <div className="mt-2.5 flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
                   <span className="text-slate-400">Czas do dzwonka:</span>
                   <span className="text-base font-extrabold font-mono tabular-nums text-emerald-400">

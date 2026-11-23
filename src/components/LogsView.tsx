@@ -98,6 +98,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ history, onClearHistory }) =
               { id: 'radio_stop', label: 'Radio Stop' },
               { id: 'amplifier_on', label: 'Wzmacniacz Wł.' },
               { id: 'amplifier_off', label: 'Wzmacniacz Wył.' },
+              { id: 'bell_draw', label: 'Losowanie' },
             ].map((f) => (
               <button
                 key={f.id}
@@ -170,6 +171,8 @@ export const LogsView: React.FC<LogsViewProps> = ({ history, onClearHistory }) =
                           ? 'Wzmacniacz Wł. (1)'
                           : item.bellType === 'amplifier_off'
                           ? 'Wzmacniacz Wył. (0)'
+                          : item.bellType === 'bell_draw'
+                          ? 'Losowanie dzwonków'
                           : 'Wyzwolenie ręczne'}
                       </span>
                     </td>

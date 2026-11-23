@@ -730,9 +730,16 @@ export default function App() {
             <SoundsView
               config={config}
               sounds={sounds}
+              status={status}
               onUploadCustomSound={handleUploadCustomSound}
               onDeleteCustomSound={handleDeleteCustomSound}
               onUpdateDefaultSounds={handleUpdateDefaultSounds}
+              onSaveConfig={handleSaveConfig}
+              onRefreshSounds={async () => {
+                await fetchSounds();
+                await fetchConfig();
+                await fetchStatus();
+              }}
             />
           ) : (
             noAccessCard

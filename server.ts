@@ -4,7 +4,14 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { ChildProcess, exec, execFile, execSync, spawn } from 'child_process';
-import { DEFAULT_TV_DISPLAY_CONFIG, INITIAL_CONFIG } from './src/data/defaultConfig';
+import dns from 'node:dns/promises';
+import net from 'node:net';
+import {
+  DEFAULT_BELL_RANDOMIZER_CONFIG,
+  DEFAULT_REMOTE_BELLS_URL,
+  DEFAULT_TV_DISPLAY_CONFIG,
+  INITIAL_CONFIG,
+} from './src/data/defaultConfig';
 import { PRESET_SOUNDS, getPresetWavBytes } from './src/utils/wavGenerator';
 import {
   AmplifierRule,
@@ -13,6 +20,7 @@ import {
   AuthStatus,
   BellHistoryEntry,
   BellItem,
+  BellRandomizerConfig,
   BellType,
   DebianGitConfig,
   DebianUpdateCheckResult,
@@ -22,6 +30,8 @@ import {
   PermissionKey,
   RadioPlaybackStatus,
   RadioStation,
+  RemoteBellFile,
+  RemoteBellScanResult,
   SoundTrack,
   SystemMetricsPoint,
   SystemStatus,
@@ -91,6 +101,26 @@ if (fs.existsSync(CONFIG_FILE)) {
     config.tvDisplay = {
       ...DEFAULT_TV_DISPLAY_CONFIG,
       ...(parsed.tvDisplay && typeof parsed.tvDisplay === 'object' ? parsed.tvDisplay : {}),
+    };
+    config.remoteBellsUrl =
+      typeof parsed.remoteBellsUrl === 'string' && parsed.remoteBellsUrl.trim()
+        ? parsed.remoteBellsUrl.trim()
+        : DEFAULT_REMOTE_BELLS_URL;
+    config.bellRandomizer = {
+      ...DEFAULT_BELL_RANDOMIZER_CONFIG,
+      ...(parsed.bellRandomizer && typeof parsed.bellRandomizer === 'object' ? parsed.bellRandomizer : {}),
+      activeDays: Array.isArray(parsed.bellRandomizer?.activeDays)
+        ? parsed.bellRandomizer.activeDays
+        : DEFAULT_BELL_RANDOMIZER_CONFIG.activeDays,
+      selectedSoundIds: Array.isArray(parsed.bellRandomizer?.selectedSoundIds)
+        ? parsed.bellRandomizer.selectedSoundIds
+        : DEFAULT_BELL_RANDOMIZER_CONFIG.selectedSoundIds,
+      weekAssignments:
+        parsed.bellRandomizer?.weekAssignments &&
+        typeof parsed.bellRandomizer.weekAssignments === 'object' &&
+        !Array.isArray(parsed.bellRandomizer.weekAssignments)
+          ? parsed.bellRandomizer.weekAssignments
+          : {},
     };
     // Migrate pre-Saturday weekMapping so Sunday stays silent while Saturday is configurable/active
     if (typeof parsed.weekMappingVersion !== 'number') {
@@ -494,13 +524,16 @@ function playSoundOnLinux(
   volumePercent: number = 80
 ): Promise<{ success: boolean; tool: string; error?: string }> {
   return new Promise((resolve) => {
-    // Find file path
-    let filePath = path.join(SOUNDS_DIR, `${soundId}.wav`);
-    if (!fs.existsSync(filePath)) {
+    // Find file path safely inside SOUNDS_DIR
+    let filePath = path.resolve(SOUNDS_DIR, `${path.basename(soundId)}.wav`);
+    if (!filePath.startsWith(SOUNDS_DIR + path.sep) || !fs.existsSync(filePath)) {
       // Check custom sounds
       const custom = customSounds.find((s) => s.id === soundId);
       if (custom && custom.filename) {
-        filePath = path.join(SOUNDS_DIR, custom.filename);
+        const candidate = path.resolve(SOUNDS_DIR, path.basename(custom.filename));
+        if (candidate.startsWith(SOUNDS_DIR + path.sep)) {
+          filePath = candidate;
+        }
       }
     }
 
@@ -834,13 +867,13 @@ function computeSystemStatus(): SystemStatus {
           progressPercent: Math.min(100, Math.round((1 - remainingSec / 3600) * 100)),
         };
 
-        const soundObj = PRESET_SOUNDS.find((p) => p.id === firstItem.startSoundId);
+        const { soundName } = resolveEffectiveBellSound('start', firstItem.startSoundId, config.defaultStartSoundId, now);
         nextBell = {
           timeStr: firstItem.startTime,
           type: 'lesson_start',
           label: `Rozpoczęcie: ${firstItem.name}`,
           secondsRemaining: remainingSec,
-          soundName: soundObj ? soundObj.name : 'Dzwonek',
+          soundName,
         };
       } else if (nowMinutes >= lastEndMin) {
         currentPeriod = {
@@ -876,13 +909,18 @@ function computeSystemStatus(): SystemStatus {
               progressPercent: progress,
             };
 
-            const endSound = PRESET_SOUNDS.find((p) => p.id === item.endSoundId);
+            const { soundName: endSoundName } = resolveEffectiveBellSound(
+              'end',
+              item.endSoundId,
+              config.defaultEndSoundId,
+              now
+            );
             nextBell = {
               timeStr: item.endTime,
               type: 'lesson_end',
               label: `Koniec: ${item.name}`,
               secondsRemaining: remainingSec,
-              soundName: endSound ? endSound.name : 'Dzwonek na przerwę',
+              soundName: endSoundName,
             };
             matched = true;
             break;
@@ -907,18 +945,27 @@ function computeSystemStatus(): SystemStatus {
               let nextBellTimeStr = nextItem.startTime;
               let nextBellLabel = `Koniec przerwy: ${nextItem.name}`;
               let nextBellSeconds = breakRemSec;
-              let nextBellSound = PRESET_SOUNDS.find((p) => p.id === nextItem.startSoundId)?.name || 'Dzwonek';
+              let nextBellSound = resolveEffectiveBellSound(
+                'start',
+                nextItem.startSoundId,
+                config.defaultStartSoundId,
+                now
+              ).soundName;
 
               if (config.warningBellEnabled && warnMinutes > 0 && nowMinutes < warnTimeMin) {
                 const warnRemSec = Math.max(0, Math.round((warnTimeMin - nowMinutes) * 60));
-                const warnSound = PRESET_SOUNDS.find((p) => p.id === (nextItem.warningSoundId || config.defaultWarningSoundId));
                 nextBellType = 'warning';
                 const warnH = Math.floor(warnTimeMin / 60);
                 const warnM = Math.floor(warnTimeMin % 60);
                 nextBellTimeStr = `${String(warnH).padStart(2, '0')}:${String(warnM).padStart(2, '0')}`;
                 nextBellLabel = `Dzwonek przywoławczy (1 min)`;
                 nextBellSeconds = warnRemSec;
-                nextBellSound = warnSound ? warnSound.name : 'Sygnał przywoławczy';
+                nextBellSound = resolveEffectiveBellSound(
+                  'warning',
+                  nextItem.warningSoundId,
+                  config.defaultWarningSoundId,
+                  now
+                ).soundName;
               }
 
               currentPeriod = {
@@ -965,6 +1012,7 @@ function computeSystemStatus(): SystemStatus {
     detectedAudioTool,
     platform: process.platform,
     uptimeSeconds: Math.floor(process.uptime()),
+    dailyRandomBell: getDailyRandomBellStatus(now),
   };
 }
 
@@ -979,6 +1027,543 @@ function getCurrentVolume(): number {
     }
   }
   return config.masterVolume;
+}
+
+/* ==================== BELL RANDOMIZER (WEEKLY DRAW / DAILY BELL) ==================== */
+const RANDOMIZER_DAY_NAMES: Record<number, string> = {
+  1: 'Poniedziałek',
+  2: 'Wtorek',
+  3: 'Środa',
+  4: 'Czwartek',
+  5: 'Piątek',
+  6: 'Sobota',
+  0: 'Niedziela',
+};
+
+function formatLocalDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getWeekMondayDateStr(d: Date): string {
+  const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+  const offsetToMonday = (copy.getDay() + 6) % 7;
+  copy.setDate(copy.getDate() - offsetToMonday);
+  return formatLocalDateStr(copy);
+}
+
+function getNextWeekMondayDateStr(d: Date): string {
+  const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+  const offsetToMonday = (copy.getDay() + 6) % 7;
+  copy.setDate(copy.getDate() - offsetToMonday + 7);
+  return formatLocalDateStr(copy);
+}
+
+function parseLocalDateStr(dateStr: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function addWeeksToMondayStr(mondayStr: string, offsetWeeks: number): string {
+  const parsed = parseLocalDateStr(mondayStr);
+  if (!parsed) return mondayStr;
+  parsed.setDate(parsed.getDate() + offsetWeeks * 7);
+  return formatLocalDateStr(parsed);
+}
+
+function diffWeeksBetween(wkA: string, wkB: string): number {
+  const a = parseLocalDateStr(wkA);
+  const b = parseLocalDateStr(wkB);
+  if (!a || !b) return 999;
+  return Math.round((b.getTime() - a.getTime()) / (7 * 24 * 60 * 60 * 1000));
+}
+
+function getNoRepeatWeeks(randCfg: Partial<BellRandomizerConfig> | undefined): number {
+  const raw = Number(randCfg?.noRepeatWeeks);
+  if (!Number.isFinite(raw)) return 4;
+  return Math.min(52, Math.max(1, Math.round(raw)));
+}
+
+function getAllAvailableTracks(): SoundTrack[] {
+  const presets: SoundTrack[] = PRESET_SOUNDS.map((p) => ({
+    id: p.id,
+    name: p.name,
+    category: 'preset',
+    description: p.description,
+    musicalKey: p.musicalKey,
+    durationSeconds: p.durationSeconds,
+    tags: p.tags,
+    filename: `${p.id}.wav`,
+    fileUrl: `/sounds/${p.id}.wav`,
+  }));
+  return [...presets, ...customSounds];
+}
+
+function soundExistsById(soundId: string | undefined | null): boolean {
+  if (!soundId) return false;
+  return (
+    PRESET_SOUNDS.some((p) => p.id === soundId) ||
+    customSounds.some((s) => s.id === soundId)
+  );
+}
+
+function findSoundNameById(soundId: string | undefined | null): string {
+  if (!soundId) return 'Dzwonek';
+  const preset = PRESET_SOUNDS.find((p) => p.id === soundId);
+  if (preset) return preset.name;
+  const custom = customSounds.find((s) => s.id === soundId);
+  if (custom) return custom.name;
+  return soundId;
+}
+
+function getBellRandomizerConfig(): BellRandomizerConfig {
+  const raw = config.bellRandomizer;
+  return {
+    ...DEFAULT_BELL_RANDOMIZER_CONFIG,
+    ...(raw || {}),
+    noRepeatWeeks: getNoRepeatWeeks(raw),
+    activeDays:
+      Array.isArray(raw?.activeDays) && raw.activeDays.length > 0
+        ? raw.activeDays
+        : DEFAULT_BELL_RANDOMIZER_CONFIG.activeDays,
+    selectedSoundIds: Array.isArray(raw?.selectedSoundIds) ? raw.selectedSoundIds : [],
+    weekAssignments:
+      raw?.weekAssignments && typeof raw.weekAssignments === 'object' ? raw.weekAssignments : {},
+  };
+}
+
+function getSoundPoolForRandomizer(randCfg: BellRandomizerConfig): SoundTrack[] {
+  const allTracks = getAllAvailableTracks();
+  if (randCfg.sourceMode === 'all_custom') {
+    const customOnly = customSounds.filter((s) => Boolean(s.id));
+    if (customOnly.length > 0) return customOnly;
+    return allTracks;
+  }
+  if (randCfg.sourceMode === 'selected_ids') {
+    const selectedSet = new Set(randCfg.selectedSoundIds || []);
+    const selected = allTracks.filter((s) => selectedSet.has(s.id));
+    if (selected.length > 0) return selected;
+    return allTracks;
+  }
+  return allTracks;
+}
+
+function pickSoundWithNoRepeatWindow(
+  pool: SoundTrack[],
+  randCfg: BellRandomizerConfig,
+  targetWeekKey: string,
+  allAssignments: Record<string, Record<number, string>>,
+  usedInTargetWeek: Set<string>,
+  lastPickedSoundId?: string | null,
+  excludeSoundId?: string | null
+): SoundTrack {
+  const baseCandidates =
+    excludeSoundId && pool.some((s) => s.id !== excludeSoundId)
+      ? pool.filter((s) => s.id !== excludeSoundId)
+      : pool;
+
+  if (!randCfg.avoidRepeatsInWeek || baseCandidates.length <= 1) {
+    return baseCandidates[crypto.randomInt(0, baseCandidates.length)];
+  }
+
+  const noRepeatWeeks = getNoRepeatWeeks(randCfg);
+  const usageMap = new Map<string, { count: number; minWeekDist: number }>();
+
+  if (noRepeatWeeks > 1) {
+    for (const [wk, dayMap] of Object.entries(allAssignments || {})) {
+      if (wk === targetWeekKey || !dayMap) continue;
+      const dist = Math.abs(diffWeeksBetween(targetWeekKey, wk));
+      if (dist < 1 || dist >= noRepeatWeeks) continue;
+      for (const sid of Object.values(dayMap)) {
+        if (!sid) continue;
+        const prev = usageMap.get(sid);
+        usageMap.set(sid, {
+          count: (prev?.count || 0) + 1,
+          minWeekDist: prev ? Math.min(prev.minWeekDist, dist) : dist,
+        });
+      }
+    }
+  }
+
+  const notUsedThisWeek = baseCandidates.filter((s) => !usedInTargetWeek.has(s.id));
+  const stage1 = notUsedThisWeek.length > 0 ? notUsedThisWeek : baseCandidates;
+
+  let minWindowCount = Infinity;
+  for (const s of stage1) {
+    const c = usageMap.get(s.id)?.count ?? 0;
+    if (c < minWindowCount) minWindowCount = c;
+  }
+  const stage2 = stage1.filter((s) => (usageMap.get(s.id)?.count ?? 0) === minWindowCount);
+
+  let maxDist = -1;
+  for (const s of stage2) {
+    const d = usageMap.get(s.id)?.minWeekDist ?? 9999;
+    if (d > maxDist) maxDist = d;
+  }
+  const stage3 = stage2.filter((s) => (usageMap.get(s.id)?.minWeekDist ?? 9999) === maxDist);
+
+  const stage4 =
+    lastPickedSoundId && stage3.some((s) => s.id !== lastPickedSoundId)
+      ? stage3.filter((s) => s.id !== lastPickedSoundId)
+      : stage3;
+
+  return stage4[crypto.randomInt(0, stage4.length)];
+}
+
+function drawWeekAssignments(
+  randCfg: BellRandomizerConfig,
+  existingMap?: Record<number, string>,
+  targetWeekKey?: string,
+  allAssignments?: Record<string, Record<number, string>>
+): Record<number, string> {
+  const pool = getSoundPoolForRandomizer(randCfg);
+  if (pool.length === 0) return {};
+
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const sortedDays = [...new Set(randCfg.activeDays)]
+    .filter((d) => d >= 0 && d <= 6)
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b));
+
+  const effectiveWeekKey = targetWeekKey || getWeekMondayDateStr(new Date());
+  const assignmentsContext = allAssignments || randCfg.weekAssignments || {};
+
+  const result: Record<number, string> = {};
+  const usedInTargetWeek = new Set<string>();
+
+  for (const day of sortedDays) {
+    if (existingMap && existingMap[day] && soundExistsById(existingMap[day])) {
+      result[day] = existingMap[day];
+      usedInTargetWeek.add(existingMap[day]);
+    }
+  }
+
+  let lastPickedSoundId: string | null = null;
+  const prevWeekKey = addWeeksToMondayStr(effectiveWeekKey, -1);
+  const prevWeekMap = assignmentsContext[prevWeekKey];
+  if (prevWeekMap) {
+    for (let i = sortedDays.length - 1; i >= 0; i--) {
+      const prevSid = prevWeekMap[sortedDays[i]];
+      if (prevSid) {
+        lastPickedSoundId = prevSid;
+        break;
+      }
+    }
+  }
+
+  for (const day of sortedDays) {
+    if (result[day]) {
+      lastPickedSoundId = result[day];
+      continue;
+    }
+
+    const picked = pickSoundWithNoRepeatWindow(
+      pool,
+      randCfg,
+      effectiveWeekKey,
+      assignmentsContext,
+      usedInTargetWeek,
+      lastPickedSoundId
+    );
+    result[day] = picked.id;
+    usedInTargetWeek.add(picked.id);
+    lastPickedSoundId = picked.id;
+  }
+  return result;
+}
+
+function drawCycleAssignments(
+  randCfg: BellRandomizerConfig,
+  startMondayKey: string,
+  weeksCount: number
+): {
+  workingAssignments: Record<string, Record<number, string>>;
+  drawnWeekKeys: string[];
+} {
+  const safeWeeks = Math.min(52, Math.max(1, Math.round(weeksCount)));
+  const workingAssignments: Record<string, Record<number, string>> = {
+    ...(randCfg.weekAssignments || {}),
+  };
+  const drawnWeekKeys: string[] = [];
+
+  for (let i = 0; i < safeWeeks; i++) {
+    const wkKey = addWeeksToMondayStr(startMondayKey, i);
+    delete workingAssignments[wkKey];
+    drawnWeekKeys.push(wkKey);
+  }
+
+  for (const wkKey of drawnWeekKeys) {
+    const weekMap = drawWeekAssignments(randCfg, undefined, wkKey, workingAssignments);
+    workingAssignments[wkKey] = weekMap;
+  }
+
+  return { workingAssignments, drawnWeekKeys };
+}
+
+function pruneOldWeekAssignments(
+  assignments: Record<string, Record<number, string>>,
+  referenceCurrentMonday: string,
+  noRepeatWeeks: number = 4
+): Record<string, Record<number, string>> {
+  const keepPastWeeks = Math.max(noRepeatWeeks + 2, 6);
+  const next: Record<string, Record<number, string>> = {};
+  for (const k of Object.keys(assignments)) {
+    const diff = diffWeeksBetween(referenceCurrentMonday, k);
+    if (diff >= -keepPastWeeks && diff <= 60) {
+      next[k] = assignments[k];
+    }
+  }
+  return next;
+}
+
+function sanitizeBellRandomizerConfig(raw: unknown): BellRandomizerConfig | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  const base = getBellRandomizerConfig();
+
+  const drawDayOfWeek =
+    typeof src.drawDayOfWeek === 'number' && Number.isInteger(src.drawDayOfWeek) && src.drawDayOfWeek >= 0 && src.drawDayOfWeek <= 6
+      ? src.drawDayOfWeek
+      : base.drawDayOfWeek;
+
+  const drawTimeRaw = typeof src.drawTime === 'string' ? src.drawTime.trim() : base.drawTime;
+  const drawTime = /^\d{2}:\d{2}$/.test(drawTimeRaw) ? drawTimeRaw : base.drawTime;
+
+  const activeDays = Array.isArray(src.activeDays)
+    ? [...new Set(src.activeDays.filter((d): d is number => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6))]
+    : base.activeDays;
+
+  const sourceMode =
+    src.sourceMode === 'all_custom' || src.sourceMode === 'all_sounds' || src.sourceMode === 'selected_ids'
+      ? src.sourceMode
+      : base.sourceMode;
+
+  const selectedSoundIds = Array.isArray(src.selectedSoundIds)
+    ? src.selectedSoundIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0).slice(0, 500)
+    : base.selectedSoundIds;
+
+  const noRepeatWeeksRaw = Number(src.noRepeatWeeks);
+  const noRepeatWeeks = Number.isFinite(noRepeatWeeksRaw)
+    ? Math.min(52, Math.max(1, Math.round(noRepeatWeeksRaw)))
+    : getNoRepeatWeeks(base);
+
+  const weekAssignments: Record<string, Record<number, string>> = {};
+  if (src.weekAssignments && typeof src.weekAssignments === 'object' && !Array.isArray(src.weekAssignments)) {
+    for (const [wk, dayMap] of Object.entries(src.weekAssignments as Record<string, unknown>)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(wk)) continue;
+      if (!dayMap || typeof dayMap !== 'object' || Array.isArray(dayMap)) continue;
+      const cleanMap: Record<number, string> = {};
+      for (const [dayKey, soundId] of Object.entries(dayMap as Record<string, unknown>)) {
+        const dayNum = Number(dayKey);
+        if (Number.isInteger(dayNum) && dayNum >= 0 && dayNum <= 6 && typeof soundId === 'string' && soundId.trim()) {
+          cleanMap[dayNum] = soundId.trim();
+        }
+      }
+      weekAssignments[wk] = cleanMap;
+    }
+  } else {
+    Object.assign(weekAssignments, base.weekAssignments);
+  }
+
+  return {
+    enabled: 'enabled' in src ? Boolean(src.enabled) : base.enabled,
+    drawDayOfWeek,
+    drawTime,
+    activeDays: activeDays.length > 0 ? activeDays : [1, 2, 3, 4, 5],
+    sourceMode,
+    selectedSoundIds,
+    avoidRepeatsInWeek: 'avoidRepeatsInWeek' in src ? Boolean(src.avoidRepeatsInWeek) : base.avoidRepeatsInWeek,
+    noRepeatWeeks,
+    applyToWarningBell: 'applyToWarningBell' in src ? Boolean(src.applyToWarningBell) : base.applyToWarningBell,
+    lastDrawnAt:
+      typeof src.lastDrawnAt === 'string' ? src.lastDrawnAt : src.lastDrawnAt === null ? null : base.lastDrawnAt,
+    lastAutoDrawMarker:
+      typeof src.lastAutoDrawMarker === 'string'
+        ? src.lastAutoDrawMarker
+        : src.lastAutoDrawMarker === null
+        ? null
+        : base.lastAutoDrawMarker,
+    weekAssignments,
+  };
+}
+
+function cleanupInvalidRandomizerAssignments(): boolean {
+  const randCfg = getBellRandomizerConfig();
+  let changed = false;
+
+  const filteredSelected = randCfg.selectedSoundIds.filter((id) => soundExistsById(id));
+  if (filteredSelected.length !== randCfg.selectedSoundIds.length) {
+    randCfg.selectedSoundIds = filteredSelected;
+    changed = true;
+  }
+
+  for (const [wk, dayMap] of Object.entries(randCfg.weekAssignments)) {
+    for (const [dayStr, soundId] of Object.entries(dayMap)) {
+      if (!soundExistsById(soundId)) {
+        delete dayMap[Number(dayStr)];
+        changed = true;
+      }
+    }
+    if (Object.keys(dayMap).length === 0) {
+      delete randCfg.weekAssignments[wk];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    config.bellRandomizer = randCfg;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  }
+  return changed;
+}
+
+function resolveEffectiveBellSound(
+  kind: 'start' | 'end' | 'warning',
+  itemSoundId: string | undefined,
+  fallbackSoundId: string,
+  now: Date = new Date()
+): { soundId: string; soundName: string; isRandomized: boolean } {
+  const randCfg = getBellRandomizerConfig();
+  const dayOfWeek = now.getDay();
+
+  if (
+    randCfg.enabled &&
+    randCfg.activeDays.includes(dayOfWeek) &&
+    (kind !== 'warning' || randCfg.applyToWarningBell)
+  ) {
+    const weekKey = getWeekMondayDateStr(now);
+    const drawnId = randCfg.weekAssignments[weekKey]?.[dayOfWeek];
+    if (drawnId && soundExistsById(drawnId)) {
+      return {
+        soundId: drawnId,
+        soundName: findSoundNameById(drawnId),
+        isRandomized: true,
+      };
+    }
+  }
+
+  const normalId = itemSoundId || fallbackSoundId;
+  return {
+    soundId: normalId,
+    soundName: findSoundNameById(normalId),
+    isRandomized: false,
+  };
+}
+
+function getDailyRandomBellStatus(now: Date = new Date()): SystemStatus['dailyRandomBell'] {
+  const randCfg = getBellRandomizerConfig();
+  if (!randCfg.enabled) return null;
+  const weekKey = getWeekMondayDateStr(now);
+  const dayOfWeek = now.getDay();
+  const soundId = randCfg.weekAssignments[weekKey]?.[dayOfWeek] || null;
+  const validId = soundId && soundExistsById(soundId) ? soundId : null;
+  return {
+    enabled: true,
+    soundId: validId,
+    soundName: validId ? findSoundNameById(validId) : null,
+    weekKey,
+    dayOfWeek,
+  };
+}
+
+let lastRandomizerCheckMinute = '';
+function evaluateBellRandomizer(now: Date, forceCheck: boolean = false): void {
+  const randCfg = getBellRandomizerConfig();
+  if (!randCfg.enabled) return;
+
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const nowHHMM = `${hh}:${mm}`;
+  const minuteKey = `${formatLocalDateStr(now)}_${nowHHMM}`;
+  if (!forceCheck && lastRandomizerCheckMinute === minuteKey) return;
+  lastRandomizerCheckMinute = minuteKey;
+
+  const currentWeekKey = getWeekMondayDateStr(now);
+  const nextWeekKey = getNextWeekMondayDateStr(now);
+  let changed = false;
+
+  // 1. Ensure current week has valid assignments for all configured activeDays
+  const existingCurrent = randCfg.weekAssignments[currentWeekKey] || {};
+  const needsCurrentFill = randCfg.activeDays.some(
+    (d) => !existingCurrent[d] || !soundExistsById(existingCurrent[d])
+  );
+  if (needsCurrentFill) {
+    const filled = drawWeekAssignments(randCfg, existingCurrent, currentWeekKey, randCfg.weekAssignments);
+    randCfg.weekAssignments = {
+      ...randCfg.weekAssignments,
+      [currentWeekKey]: filled,
+    };
+    randCfg.lastDrawnAt = now.toISOString();
+    changed = true;
+    const summary = Object.entries(filled)
+      .map(([d, sid]) => `${RANDOMIZER_DAY_NAMES[Number(d)] || d}: ${findSoundNameById(sid)}`)
+      .join(', ');
+    history.unshift({
+      id: `draw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: now.toISOString(),
+      timeStr: `${nowHHMM}:${String(now.getSeconds()).padStart(2, '0')}`,
+      bellType: 'bell_draw',
+      title: `Wylosowano dzwonki na bieżący tydzień (${currentWeekKey})`,
+      soundName: `${Object.keys(filled).length} dni`,
+      status: 'simulated',
+      details: summary,
+    });
+    saveHistory();
+  }
+
+  // 2. Scheduled weekly draw (e.g. Sunday evening draws for upcoming week without repeating last N weeks)
+  const drawDay = randCfg.drawDayOfWeek;
+  const drawTime = randCfg.drawTime || '18:00';
+  if (now.getDay() === drawDay && nowHHMM >= drawTime) {
+    const targetWeekKey = drawDay === 0 ? nextWeekKey : currentWeekKey;
+    const marker = `${formatLocalDateStr(now)}_${targetWeekKey}`;
+    const alreadyDrawnThisRun = randCfg.lastAutoDrawMarker === marker;
+    const existingTarget = randCfg.weekAssignments[targetWeekKey] || {};
+    const targetComplete = randCfg.activeDays.every(
+      (d) => Boolean(existingTarget[d] && soundExistsById(existingTarget[d]))
+    );
+
+    if (!alreadyDrawnThisRun && !targetComplete) {
+      const freshDraw = drawWeekAssignments(randCfg, undefined, targetWeekKey, randCfg.weekAssignments);
+      randCfg.weekAssignments = {
+        ...randCfg.weekAssignments,
+        [targetWeekKey]: freshDraw,
+      };
+      randCfg.lastDrawnAt = now.toISOString();
+      randCfg.lastAutoDrawMarker = marker;
+      changed = true;
+      const summary = Object.entries(freshDraw)
+        .map(([d, sid]) => `${RANDOMIZER_DAY_NAMES[Number(d)] || d}: ${findSoundNameById(sid)}`)
+        .join(', ');
+      history.unshift({
+        id: `draw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: now.toISOString(),
+        timeStr: `${nowHHMM}:${String(now.getSeconds()).padStart(2, '0')}`,
+        bellType: 'bell_draw',
+        title:
+          drawDay === 0
+            ? `Niedzielne losowanie dzwonków na tydzień od ${targetWeekKey}`
+            : `Automatyczne losowanie dzwonków na tydzień od ${targetWeekKey}`,
+        soundName: `${Object.keys(freshDraw).length} dni`,
+        status: 'simulated',
+        details: summary,
+      });
+      saveHistory();
+    }
+  }
+
+  if (changed) {
+    randCfg.weekAssignments = pruneOldWeekAssignments(
+      randCfg.weekAssignments,
+      currentWeekKey,
+      getNoRepeatWeeks(randCfg)
+    );
+    config.bellRandomizer = randCfg;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+  }
 }
 
 // Background scheduler interval - runs every second
@@ -1872,6 +2457,7 @@ if (initialSysfsTemp) {
 }
 sampleSystemTelemetry(new Date());
 void refreshCpuTemperature();
+evaluateBellRandomizer(new Date(), true);
 
 setInterval(async () => {
   const now = new Date();
@@ -1886,6 +2472,9 @@ setInterval(async () => {
 
   // Check break-time radio every second
   handleBreakRadioTick(now);
+
+  // Check weekly/daily bell randomizer schedule
+  evaluateBellRandomizer(now);
 
   // Only trigger bells on second 00 of each minute
   if (currentSec !== 0) return;
@@ -1913,10 +2502,9 @@ setInterval(async () => {
       if (radioStatus.isPlaying && radioStatus.mode === 'auto_break') {
         stopRadioStream('Dzwonek na lekcję');
       }
-      const soundId = item.startSoundId || config.defaultStartSoundId;
-      const sound = PRESET_SOUNDS.find((p) => p.id === soundId);
-      console.log(`[HarmoniaBell] DZWONEK START: ${item.name} o ${timeKey}`);
-      const res = await playSoundOnLinux(soundId, currentVolume);
+      const resolvedStart = resolveEffectiveBellSound('start', item.startSoundId, config.defaultStartSoundId, now);
+      console.log(`[HarmoniaBell] DZWONEK START: ${item.name} o ${timeKey} (${resolvedStart.soundName})`);
+      const res = await playSoundOnLinux(resolvedStart.soundId, currentVolume);
 
       history.unshift({
         id: `bell_${Date.now()}`,
@@ -1924,19 +2512,20 @@ setInterval(async () => {
         timeStr: `${timeKey}:00`,
         bellType: 'lesson_start',
         title: `Rozpoczęcie: ${item.name}`,
-        soundName: sound ? sound.name : soundId,
+        soundName: resolvedStart.soundName,
         status: res.success ? (res.tool === 'simulation_mode' ? 'simulated' : 'played_linux') : 'error',
-        details: res.error || `Głośność: ${currentVolume}%, Silnik: ${res.tool}`,
+        details:
+          res.error ||
+          `Głośność: ${currentVolume}%, Silnik: ${res.tool}${resolvedStart.isRandomized ? ' (wylosowany na dzień)' : ''}`,
       });
       saveHistory();
     }
 
     // 2. Check end bell
     if (item.endTime === timeKey) {
-      const soundId = item.endSoundId || config.defaultEndSoundId;
-      const sound = PRESET_SOUNDS.find((p) => p.id === soundId);
-      console.log(`[HarmoniaBell] DZWONEK KONIEC: ${item.name} o ${timeKey}`);
-      const res = await playSoundOnLinux(soundId, currentVolume);
+      const resolvedEnd = resolveEffectiveBellSound('end', item.endSoundId, config.defaultEndSoundId, now);
+      console.log(`[HarmoniaBell] DZWONEK KONIEC: ${item.name} o ${timeKey} (${resolvedEnd.soundName})`);
+      const res = await playSoundOnLinux(resolvedEnd.soundId, currentVolume);
 
       history.unshift({
         id: `bell_${Date.now()}`,
@@ -1944,9 +2533,11 @@ setInterval(async () => {
         timeStr: `${timeKey}:00`,
         bellType: 'lesson_end',
         title: `Koniec: ${item.name}`,
-        soundName: sound ? sound.name : soundId,
+        soundName: resolvedEnd.soundName,
         status: res.success ? (res.tool === 'simulation_mode' ? 'simulated' : 'played_linux') : 'error',
-        details: res.error || `Głośność: ${currentVolume}%, Silnik: ${res.tool}`,
+        details:
+          res.error ||
+          `Głośność: ${currentVolume}%, Silnik: ${res.tool}${resolvedEnd.isRandomized ? ' (wylosowany na dzień)' : ''}`,
       });
       saveHistory();
     }
@@ -1965,10 +2556,14 @@ setInterval(async () => {
           if (radioStatus.isPlaying && radioStatus.mode === 'auto_break') {
             stopRadioStream('Dzwonek przywoławczy');
           }
-          const soundId = item.warningSoundId || config.defaultWarningSoundId;
-          const sound = PRESET_SOUNDS.find((p) => p.id === soundId);
+          const resolvedWarn = resolveEffectiveBellSound(
+            'warning',
+            item.warningSoundId,
+            config.defaultWarningSoundId,
+            now
+          );
           console.log(`[HarmoniaBell] DZWONEK PRZYWOŁAWCZY przed: ${item.name} o ${timeKey}`);
-          const res = await playSoundOnLinux(soundId, Math.max(50, currentVolume - 10));
+          const res = await playSoundOnLinux(resolvedWarn.soundId, Math.max(50, currentVolume - 10));
 
           history.unshift({
             id: `bell_${Date.now()}`,
@@ -1976,9 +2571,11 @@ setInterval(async () => {
             timeStr: `${timeKey}:00`,
             bellType: 'warning',
             title: `Przywoławczy (1 min): ${item.name}`,
-            soundName: sound ? sound.name : soundId,
+            soundName: resolvedWarn.soundName,
             status: res.success ? (res.tool === 'simulation_mode' ? 'simulated' : 'played_linux') : 'error',
-            details: res.error || `Głośność: ${currentVolume - 10}%, Silnik: ${res.tool}`,
+            details:
+              res.error ||
+              `Głośność: ${currentVolume - 10}%, Silnik: ${res.tool}${resolvedWarn.isRandomized ? ' (wylosowany na dzień)' : ''}`,
           });
           saveHistory();
         }
@@ -2470,6 +3067,8 @@ const CONFIG_KEY_PERMISSIONS: Record<string, PermissionKey[]> = {
   amplifierRespectHolidays: ['schedules_edit', 'volume_edit'],
   amplifierSchedule: ['schedules_edit', 'volume_edit'],
   tvDisplay: ['volume_edit', 'schedules_edit', 'users_manage'],
+  remoteBellsUrl: ['sounds_manage', 'schedules_edit'],
+  bellRandomizer: ['sounds_manage', 'schedules_edit'],
 };
 
 app.post('/api/config', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -2513,10 +3112,28 @@ app.post('/api/config', requireAuth, (req: AuthenticatedRequest, res: Response) 
       incoming.tvDisplay = sanitizedTv;
     }
 
+    if ('remoteBellsUrl' in incoming && incoming.remoteBellsUrl !== undefined) {
+      if (typeof incoming.remoteBellsUrl !== 'string' || !/^https?:\/\//i.test(incoming.remoteBellsUrl.trim())) {
+        return res.status(400).json({ success: false, error: 'Adres katalogu dzwonków musi zaczynać się od http:// lub https://.' });
+      }
+      incoming.remoteBellsUrl = incoming.remoteBellsUrl.trim().slice(0, 500);
+    }
+
+    if ('bellRandomizer' in incoming && incoming.bellRandomizer !== undefined) {
+      const sanitizedRand = sanitizeBellRandomizerConfig(incoming.bellRandomizer);
+      if (!sanitizedRand) {
+        return res.status(400).json({ success: false, error: 'Nieprawidłowy format konfiguracji losowania dzwonków.' });
+      }
+      incoming.bellRandomizer = sanitizedRand;
+    }
+
     config = { ...config, ...incoming } as AppConfig;
     // Allow immediate schedule re-evaluation if amplifier config/schedule changed
     amplifierLastAutoWindowKey = null;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    if ('bellRandomizer' in incoming) {
+      evaluateBellRandomizer(new Date(), true);
+    }
     res.json({ success: true, message: 'Konfiguracja zapisana pomyślnie' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -2637,8 +3254,8 @@ app.delete('/api/sounds/:id', requireAnyPermission(['sounds_manage']), (req: Req
   if (idx !== -1) {
     const sound = customSounds[idx];
     if (sound.filename) {
-      const p = path.join(SOUNDS_DIR, sound.filename);
-      if (fs.existsSync(p)) {
+      const p = path.resolve(SOUNDS_DIR, path.basename(sound.filename));
+      if (p.startsWith(SOUNDS_DIR + path.sep) && fs.existsSync(p)) {
         try {
           fs.unlinkSync(p);
         } catch {}
@@ -2646,10 +3263,728 @@ app.delete('/api/sounds/:id', requireAnyPermission(['sounds_manage']), (req: Req
     }
     customSounds.splice(idx, 1);
     fs.writeFileSync(CUSTOM_SOUNDS_FILE, JSON.stringify(customSounds, null, 2));
+    cleanupInvalidRandomizerAssignments();
     return res.json({ success: true });
   }
   res.status(404).json({ error: 'Nie znaleziono pliku' });
 });
+
+// 7b. Remote Web Directory Browser, Downloader & Sync (Protected + SSRF/Path hardened)
+const ALLOWED_REMOTE_AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac']);
+const MAX_REMOTE_AUDIO_BYTES = 25 * 1024 * 1024;
+
+function isPrivateOrReservedIp(ipRaw: string): boolean {
+  const ip = ipRaw.toLowerCase();
+  if (net.isIPv4(ip)) {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+  if (net.isIPv6(ip)) {
+    if (ip === '::1' || ip === '::') return true;
+    if (ip.startsWith('::ffff:')) {
+      return isPrivateOrReservedIp(ip.slice(7));
+    }
+    if (ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('ff')) {
+      return true;
+    }
+    return false;
+  }
+  return true;
+}
+
+async function assertSafePublicHttpUrl(rawUrl: string): Promise<URL> {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+    throw new Error('Podaj poprawny adres URL katalogu.');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    throw new Error('Nieprawidłowy format adresu URL.');
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Dozwolone są wyłącznie adresy http:// oraz https://.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Adres URL nie może zawierać wbudowanych danych logowania.');
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
+    throw new Error('Lokalne i wewnętrzne adresy sieciowe są zablokowane.');
+  }
+
+  if (net.isIP(host)) {
+    if (isPrivateOrReservedIp(host)) {
+      throw new Error('Prywatne lub lokalne adresy IP są zablokowane.');
+    }
+    return parsed;
+  }
+
+  let resolved: { address: string; family: number }[];
+  try {
+    resolved = await dns.lookup(host, { all: true });
+  } catch {
+    throw new Error(`Nie udało się rozpoznać nazwy domeny: ${host}`);
+  }
+  if (!resolved || resolved.length === 0) {
+    throw new Error(`Brak rekordów DNS dla domeny: ${host}`);
+  }
+  for (const entry of resolved) {
+    if (isPrivateOrReservedIp(entry.address)) {
+      throw new Error('Domena wskazuje na adres lokalny lub prywatny, co jest zablokowane.');
+    }
+  }
+  return parsed;
+}
+
+async function fetchWithSafeRedirects(
+  urlStr: string,
+  timeoutMs: number,
+  maxRedirects: number = 3
+): Promise<{ response: globalThis.Response; finalUrl: string }> {
+  let currentUrl = urlStr;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const safeUrl = await assertSafePublicHttpUrl(currentUrl);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(safeUrl.toString(), {
+        method: 'GET',
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'HarmoniaBell-Controller/1.0',
+        },
+      });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new Error(`Serwer zwrócił przekierowanie (${response.status}) bez docelowego adresu.`);
+        }
+        currentUrl = new URL(location, safeUrl.toString()).toString();
+        continue;
+      }
+      return { response, finalUrl: safeUrl.toString() };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error('Zbyt wiele przekierowań HTTP.');
+}
+
+function buildLocalRemoteFilename(remoteFilename: string): string {
+  const baseOnly = path.basename(remoteFilename);
+  const ext = path.extname(baseOnly).toLowerCase();
+  const safeExt = ALLOWED_REMOTE_AUDIO_EXTS.has(ext) ? ext : '.mp3';
+  const rawStem = baseOnly.slice(0, baseOnly.length - ext.length);
+  const safeStem = rawStem
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64) || 'bell';
+  const shortHash = crypto.createHash('sha1').update(remoteFilename).digest('hex').slice(0, 6);
+  return `remote_${safeStem}_${shortHash}${safeExt}`;
+}
+
+function formatRemoteFriendlyName(filename: string): string {
+  const ext = path.extname(filename);
+  const stem = ext ? filename.slice(0, -ext.length) : filename;
+  return stem.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim() || filename;
+}
+
+function parseRemoteBellsHtml(
+  html: string,
+  baseUrl: string
+): Omit<RemoteBellFile, 'alreadyOnController' | 'localSoundId'>[] {
+  const parsedBase = new URL(baseUrl);
+  const results: Omit<RemoteBellFile, 'alreadyOnController' | 'localSoundId'>[] = [];
+  const seenUrls = new Set<string>();
+
+  const anchorRegex = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorRegex.exec(html)) !== null) {
+    const rawHref = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+    const afterStart = match.index + match[0].length;
+    const rawSlice = html.slice(afterStart, afterStart + 260);
+    const stopIdx = rawSlice.search(/<a\b|<\/tr>|\r?\n/i);
+    const trailingRaw = stopIdx >= 0 ? rawSlice.slice(0, stopIdx) : rawSlice;
+    const trailingText = trailingRaw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!rawHref) continue;
+    if (
+      rawHref.startsWith('#') ||
+      rawHref.startsWith('?') ||
+      rawHref.startsWith('mailto:') ||
+      rawHref.startsWith('javascript:') ||
+      rawHref.endsWith('/') ||
+      rawHref === '..' ||
+      rawHref === '../'
+    ) {
+      continue;
+    }
+
+    let resolved: URL;
+    try {
+      resolved = new URL(rawHref, parsedBase);
+    } catch {
+      continue;
+    }
+
+    if (resolved.hostname.toLowerCase() !== parsedBase.hostname.toLowerCase()) {
+      continue;
+    }
+
+    const lastSeg = resolved.pathname.split('/').filter(Boolean).pop();
+    if (!lastSeg) continue;
+
+    let decodedFilename = lastSeg;
+    try {
+      decodedFilename = decodeURIComponent(lastSeg);
+    } catch {}
+
+    const ext = path.extname(decodedFilename).toLowerCase();
+    if (!ALLOWED_REMOTE_AUDIO_EXTS.has(ext)) {
+      continue;
+    }
+
+    const resolvedStr = resolved.toString();
+    if (seenUrls.has(resolvedStr)) continue;
+    seenUrls.add(resolvedStr);
+
+    const dateMatch = trailingText.match(/\b(\d{4}-\d{2}-\d{2}|\d{2}-[A-Za-z]{3}-\d{4})\b/);
+    const withoutDateAndTime = trailingText
+      .replace(/\b\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b/g, ' ')
+      .replace(/\b\d{2}-[A-Za-z]{3}-\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?\b/g, ' ')
+      .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ');
+    const sizeMatch = withoutDateAndTime.match(/\b(\d+(?:[.,]\d+)?\s*[KMG]i?B?|\d{4,})\b/i);
+
+    results.push({
+      filename: decodedFilename,
+      name: formatRemoteFriendlyName(decodedFilename),
+      url: resolvedStr,
+      ext: ext.slice(1).toUpperCase(),
+      sizeLabel: sizeMatch ? sizeMatch[1] : undefined,
+      modifiedAt: dateMatch ? dateMatch[1] : undefined,
+    });
+  }
+
+  return results.sort((a, b) => a.filename.localeCompare(b.filename, 'pl'));
+}
+
+async function scanRemoteBellsDirectory(rawUrl: string): Promise<RemoteBellScanResult> {
+  const normalizedInput = rawUrl.trim().endsWith('/') ? rawUrl.trim() : `${rawUrl.trim()}/`;
+  const { response, finalUrl } = await fetchWithSafeRedirects(normalizedInput, 15000);
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error(
+        'Serwer zdalny zwrócił kod HTTP 403 (brak uprawnień do listowania katalogu – włącz autoindex np. Options +Indexes na serwerze WWW lub utwórz plik index.html / index.json).'
+      );
+    }
+    throw new Error(`Serwer zdalny zwrócił kod HTTP ${response.status}.`);
+  }
+
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('text/html') && !contentType.includes('text/plain') && !contentType.includes('application/json')) {
+    throw new Error(`Podany adres nie zwraca listy katalogu (${contentType || 'nieznany typ'}).`);
+  }
+
+  const bodyText = await response.text();
+  if (bodyText.length > 2 * 1024 * 1024) {
+    throw new Error('Odpowiedź katalogu internetowego jest zbyt duża.');
+  }
+
+  let parsedFiles: Omit<RemoteBellFile, 'alreadyOnController' | 'localSoundId'>[] = [];
+  if (contentType.includes('application/json')) {
+    try {
+      const json = JSON.parse(bodyText);
+      const list = Array.isArray(json) ? json : Array.isArray(json?.files) ? json.files : [];
+      for (const entry of list) {
+        const fname = typeof entry === 'string' ? entry : typeof entry?.filename === 'string' ? entry.filename : entry?.name;
+        if (typeof fname !== 'string') continue;
+        const ext = path.extname(fname).toLowerCase();
+        if (!ALLOWED_REMOTE_AUDIO_EXTS.has(ext)) continue;
+        const absUrl = new URL(fname, finalUrl).toString();
+        parsedFiles.push({
+          filename: path.basename(fname),
+          name: formatRemoteFriendlyName(path.basename(fname)),
+          url: absUrl,
+          ext: ext.slice(1).toUpperCase(),
+          sizeLabel: typeof entry?.size === 'string' ? entry.size : undefined,
+        });
+      }
+    } catch {
+      parsedFiles = [];
+    }
+  } else {
+    parsedFiles = parseRemoteBellsHtml(bodyText, finalUrl);
+  }
+
+  const remoteFilenameSet = new Set(parsedFiles.map((f) => f.filename.toLowerCase()));
+  const files: RemoteBellFile[] = parsedFiles.map((f) => {
+    const targetLocalFilename = buildLocalRemoteFilename(f.filename);
+    const localMatch = customSounds.find(
+      (s) =>
+        s.remoteFilename?.toLowerCase() === f.filename.toLowerCase() ||
+        s.remoteUrl === f.url ||
+        s.filename?.toLowerCase() === targetLocalFilename.toLowerCase()
+    );
+    return {
+      ...f,
+      alreadyOnController: Boolean(localMatch),
+      localSoundId: localMatch?.id,
+    };
+  });
+
+  const staleLocalSynced = customSounds
+    .filter((s) => {
+      if (!s.syncedFromRemote) return false;
+      const key = (s.remoteFilename || s.filename || '').toLowerCase();
+      return !remoteFilenameSet.has(key);
+    })
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      filename: s.filename || '',
+      remoteFilename: s.remoteFilename,
+    }));
+
+  return {
+    directoryUrl: finalUrl,
+    scannedAt: new Date().toISOString(),
+    files,
+    staleLocalSynced,
+  };
+}
+
+async function downloadSingleRemoteBell(
+  fileUrl: string,
+  remoteFilenameInput?: string
+): Promise<{ status: 'added' | 'updated'; sound: SoundTrack }> {
+  const safeUrlObj = await assertSafePublicHttpUrl(fileUrl);
+  const rawName = remoteFilenameInput
+    ? path.basename(remoteFilenameInput)
+    : decodeURIComponent(safeUrlObj.pathname.split('/').filter(Boolean).pop() || 'bell.mp3');
+  const ext = path.extname(rawName).toLowerCase();
+  if (!ALLOWED_REMOTE_AUDIO_EXTS.has(ext)) {
+    throw new Error(`Nieobsługiwane rozszerzenie pliku audio: ${rawName}`);
+  }
+
+  const { response } = await fetchWithSafeRedirects(safeUrlObj.toString(), 25000);
+  if (!response.ok) {
+    throw new Error(`Błąd pobierania ${rawName}: HTTP ${response.status}`);
+  }
+  const respContentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (respContentType.includes('text/html')) {
+    throw new Error(`Plik ${rawName} zwrócił stronę HTML zamiast strumienia audio.`);
+  }
+
+  const contentLen = Number(response.headers.get('content-length') || 0);
+  if (contentLen > MAX_REMOTE_AUDIO_BYTES) {
+    throw new Error(`Plik ${rawName} przekracza limit 25 MB.`);
+  }
+
+  const buf = Buffer.from(await response.arrayBuffer());
+  if (buf.length === 0) {
+    throw new Error(`Pobrany plik ${rawName} jest pusty.`);
+  }
+  if (buf.length > MAX_REMOTE_AUDIO_BYTES) {
+    throw new Error(`Plik ${rawName} przekracza limit 25 MB.`);
+  }
+
+  const targetFileName = buildLocalRemoteFilename(rawName);
+  const targetPath = path.resolve(SOUNDS_DIR, targetFileName);
+  if (!targetPath.startsWith(SOUNDS_DIR + path.sep)) {
+    throw new Error('Nieprawidłowa docelowa ścieżka pliku.');
+  }
+
+  fs.writeFileSync(targetPath, buf);
+
+  const existingIdx = customSounds.findIndex(
+    (s) =>
+      s.remoteFilename?.toLowerCase() === rawName.toLowerCase() ||
+      s.filename?.toLowerCase() === targetFileName.toLowerCase()
+  );
+
+  if (existingIdx !== -1) {
+    const existing = customSounds[existingIdx];
+    const updatedSound: SoundTrack = {
+      ...existing,
+      name: existing.name || formatRemoteFriendlyName(rawName),
+      filename: targetFileName,
+      fileUrl: `/sounds/${targetFileName}`,
+      remoteUrl: safeUrlObj.toString(),
+      remoteFilename: rawName,
+      syncedFromRemote: true,
+      sizeBytes: buf.length,
+    };
+    customSounds[existingIdx] = updatedSound;
+    fs.writeFileSync(CUSTOM_SOUNDS_FILE, JSON.stringify(customSounds, null, 2));
+    return { status: 'updated', sound: updatedSound };
+  }
+
+  const id = `remote_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const newSound: SoundTrack = {
+    id,
+    name: formatRemoteFriendlyName(rawName),
+    category: 'custom',
+    description: `Pobrany z katalogu WWW (${safeUrlObj.hostname})`,
+    musicalKey: `Katalog WWW (${ext.slice(1).toUpperCase()})`,
+    durationSeconds: 4.0,
+    tags: ['katalog WWW', ext.slice(1).toUpperCase()],
+    filename: targetFileName,
+    fileUrl: `/sounds/${targetFileName}`,
+    isCustom: true,
+    syncedFromRemote: true,
+    remoteUrl: safeUrlObj.toString(),
+    remoteFilename: rawName,
+    sizeBytes: buf.length,
+  };
+  customSounds.push(newSound);
+  fs.writeFileSync(CUSTOM_SOUNDS_FILE, JSON.stringify(customSounds, null, 2));
+  return { status: 'added', sound: newSound };
+}
+
+app.post('/api/sounds/remote/scan', requireAnyPermission(['sounds_manage']), async (req: Request, res: Response) => {
+  try {
+    const rawUrl =
+      typeof req.body?.url === 'string' && req.body.url.trim()
+        ? req.body.url.trim()
+        : config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL;
+
+    const result = await scanRemoteBellsDirectory(rawUrl);
+    if (config.remoteBellsUrl !== result.directoryUrl) {
+      config.remoteBellsUrl = result.directoryUrl;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    }
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Nie udało się odczytać katalogu internetowego.' });
+  }
+});
+
+app.get('/api/sounds/remote/preview', requireAnyPermission(['sounds_manage']), async (req: Request, res: Response) => {
+  try {
+    const rawUrl = typeof req.query?.url === 'string' ? req.query.url : '';
+    const safeUrl = await assertSafePublicHttpUrl(rawUrl);
+    const ext = path.extname(safeUrl.pathname).toLowerCase();
+    if (!ALLOWED_REMOTE_AUDIO_EXTS.has(ext)) {
+      return res.status(400).json({ error: 'Nieobsługiwany typ pliku audio.' });
+    }
+    const { response } = await fetchWithSafeRedirects(safeUrl.toString(), 15000);
+    if (!response.ok) {
+      return res.status(502).json({ error: `Błąd pobierania podglądu: HTTP ${response.status}` });
+    }
+    const contentLen = Number(response.headers.get('content-length') || 0);
+    if (contentLen > MAX_REMOTE_AUDIO_BYTES) {
+      return res.status(413).json({ error: 'Plik przekracza limit 25 MB.' });
+    }
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.length > MAX_REMOTE_AUDIO_BYTES) {
+      return res.status(413).json({ error: 'Plik przekracza limit 25 MB.' });
+    }
+    const mimeMap: Record<string, string> = {
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg': 'audio/ogg',
+      '.flac': 'audio/flac',
+      '.m4a': 'audio/mp4',
+      '.aac': 'audio/aac',
+    };
+    res.setHeader('Content-Type', mimeMap[ext] || 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Nie udało się odsłuchać pliku zdalnego.' });
+  }
+});
+
+app.post('/api/sounds/remote/download', requireAnyPermission(['sounds_manage']), async (req: Request, res: Response) => {
+  try {
+    const rawFiles = Array.isArray(req.body?.files) ? req.body.files : [];
+    if (rawFiles.length === 0) {
+      return res.status(400).json({ success: false, error: 'Nie zaznaczono żadnego pliku do pobrania.' });
+    }
+    if (rawFiles.length > 200) {
+      return res.status(400).json({ success: false, error: 'Jednorazowo można pobrać maksymalnie 200 plików.' });
+    }
+
+    let added = 0;
+    let updated = 0;
+    const failed: { filename: string; error: string }[] = [];
+
+    for (const item of rawFiles) {
+      const fileUrl = typeof item?.url === 'string' ? item.url : '';
+      const filename = typeof item?.filename === 'string' ? item.filename : fileUrl;
+      try {
+        const outcome = await downloadSingleRemoteBell(fileUrl, filename);
+        if (outcome.status === 'added') added++;
+        else updated++;
+      } catch (err: any) {
+        failed.push({ filename: String(filename), error: err.message || 'Błąd pobierania' });
+      }
+    }
+
+    const scanUrl =
+      typeof req.body?.directoryUrl === 'string' && req.body.directoryUrl.trim()
+        ? req.body.directoryUrl.trim()
+        : config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL;
+    let scanResult: RemoteBellScanResult | null = null;
+    try {
+      scanResult = await scanRemoteBellsDirectory(scanUrl);
+    } catch {}
+
+    res.json({
+      success: added > 0 || updated > 0 || failed.length === 0,
+      added,
+      updated,
+      failed,
+      scanResult,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Błąd pobierania dzwonków.' });
+  }
+});
+
+app.post('/api/sounds/remote/sync', requireAnyPermission(['sounds_manage']), async (req: Request, res: Response) => {
+  try {
+    const rawUrl =
+      typeof req.body?.directoryUrl === 'string' && req.body.directoryUrl.trim()
+        ? req.body.directoryUrl.trim()
+        : config.remoteBellsUrl || DEFAULT_REMOTE_BELLS_URL;
+    const removeStale = req.body?.removeStale !== false;
+
+    const initialScan = await scanRemoteBellsDirectory(rawUrl);
+    config.remoteBellsUrl = initialScan.directoryUrl;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+
+    let added = 0;
+    let skippedExisting = 0;
+    let removed = 0;
+    const failed: { filename: string; error: string }[] = [];
+
+    for (const file of initialScan.files) {
+      if (file.alreadyOnController) {
+        skippedExisting++;
+        continue;
+      }
+      try {
+        await downloadSingleRemoteBell(file.url, file.filename);
+        added++;
+      } catch (err: any) {
+        failed.push({ filename: file.filename, error: err.message || 'Błąd pobierania' });
+      }
+    }
+
+    if (removeStale && initialScan.staleLocalSynced.length > 0) {
+      const staleIds = new Set(initialScan.staleLocalSynced.map((s) => s.id));
+      for (const stale of initialScan.staleLocalSynced) {
+        if (stale.filename) {
+          const p = path.resolve(SOUNDS_DIR, path.basename(stale.filename));
+          if (p.startsWith(SOUNDS_DIR + path.sep) && fs.existsSync(p)) {
+            try {
+              fs.unlinkSync(p);
+            } catch {}
+          }
+        }
+      }
+      const beforeCount = customSounds.length;
+      customSounds = customSounds.filter((s) => !staleIds.has(s.id));
+      removed = beforeCount - customSounds.length;
+      fs.writeFileSync(CUSTOM_SOUNDS_FILE, JSON.stringify(customSounds, null, 2));
+      cleanupInvalidRandomizerAssignments();
+    }
+
+    const updatedScan = await scanRemoteBellsDirectory(initialScan.directoryUrl);
+
+    res.json({
+      success: true,
+      added,
+      skippedExisting,
+      removed,
+      failed,
+      result: updatedScan,
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message || 'Błąd synchronizacji z katalogiem WWW.' });
+  }
+});
+
+// 7c. Weekly / Multi-Week Bell Randomizer Draw (Protected)
+app.post(
+  '/api/sounds/randomizer/draw',
+  requireAnyPermission(['sounds_manage', 'schedules_edit']),
+  (req: Request, res: Response) => {
+    try {
+      const randCfg = getBellRandomizerConfig();
+      const rawScope = req.body?.scope;
+      const scope: 'current' | 'next' | 'cycle' =
+        rawScope === 'cycle' ? 'cycle' : rawScope === 'next' ? 'next' : 'current';
+      const customWeekKey =
+        typeof req.body?.weekKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.weekKey)
+          ? req.body.weekKey
+          : null;
+      const singleDay =
+        typeof req.body?.dayOfWeek === 'number' &&
+        Number.isInteger(req.body.dayOfWeek) &&
+        req.body.dayOfWeek >= 0 &&
+        req.body.dayOfWeek <= 6
+          ? req.body.dayOfWeek
+          : null;
+
+      const now = new Date();
+      const currentWeekKey = getWeekMondayDateStr(now);
+      const nextWeekKey = getNextWeekMondayDateStr(now);
+      const noRepeatWeeks = getNoRepeatWeeks(randCfg);
+
+      const pool = getSoundPoolForRandomizer(randCfg);
+      if (pool.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Brak dostępnych dzwonków w wybranej puli losowania.',
+        });
+      }
+
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+
+      if (scope === 'cycle' && singleDay === null) {
+        const startMondayKey = req.body?.startFrom === 'next' ? nextWeekKey : currentWeekKey;
+        const { workingAssignments, drawnWeekKeys } = drawCycleAssignments(
+          randCfg,
+          startMondayKey,
+          noRepeatWeeks
+        );
+        randCfg.weekAssignments = pruneOldWeekAssignments(
+          workingAssignments,
+          currentWeekKey,
+          noRepeatWeeks
+        );
+        randCfg.lastDrawnAt = now.toISOString();
+        config.bellRandomizer = randCfg;
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+
+        const totalSlots = drawnWeekKeys.reduce(
+          (acc, wk) => acc + Object.keys(randCfg.weekAssignments[wk] || {}).length,
+          0
+        );
+        const firstWeekSummary = Object.entries(randCfg.weekAssignments[drawnWeekKeys[0]] || {})
+          .map(([d, sid]) => `${RANDOMIZER_DAY_NAMES[Number(d)] || d}: ${findSoundNameById(sid)}`)
+          .join(', ');
+
+        history.unshift({
+          id: `draw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: now.toISOString(),
+          timeStr: `${hh}:${mm}:${ss}`,
+          bellType: 'bell_draw',
+          title: `Wylosowano harmonogram na ${noRepeatWeeks} tyg. bez powtórzeń (od ${startMondayKey})`,
+          soundName: `${drawnWeekKeys.length} tyg. (${totalSlots} dni)`,
+          status: 'simulated',
+          details: `Pierwszy tydzień (${drawnWeekKeys[0]}): ${firstWeekSummary}`,
+        });
+        saveHistory();
+
+        return res.json({
+          success: true,
+          scope: 'cycle',
+          weeksCount: drawnWeekKeys.length,
+          drawnWeekKeys,
+          targetWeekKey: startMondayKey,
+          bellRandomizer: randCfg,
+        });
+      }
+
+      const targetWeekKey = customWeekKey || (scope === 'next' ? nextWeekKey : currentWeekKey);
+
+      if (singleDay !== null) {
+        const prevMap = { ...(randCfg.weekAssignments[targetWeekKey] || {}) };
+        const usedOthersInWeek = new Set(
+          Object.entries(prevMap)
+            .filter(([d]) => Number(d) !== singleDay)
+            .map(([, id]) => id)
+        );
+        const previousId = prevMap[singleDay] || null;
+        const picked = pickSoundWithNoRepeatWindow(
+          pool,
+          randCfg,
+          targetWeekKey,
+          randCfg.weekAssignments,
+          usedOthersInWeek,
+          previousId,
+          previousId
+        );
+        prevMap[singleDay] = picked.id;
+        randCfg.weekAssignments = {
+          ...randCfg.weekAssignments,
+          [targetWeekKey]: prevMap,
+        };
+      } else {
+        const freshMap = drawWeekAssignments(
+          randCfg,
+          undefined,
+          targetWeekKey,
+          randCfg.weekAssignments
+        );
+        randCfg.weekAssignments = {
+          ...randCfg.weekAssignments,
+          [targetWeekKey]: freshMap,
+        };
+      }
+
+      randCfg.lastDrawnAt = now.toISOString();
+      randCfg.weekAssignments = pruneOldWeekAssignments(
+        randCfg.weekAssignments,
+        currentWeekKey,
+        noRepeatWeeks
+      );
+      config.bellRandomizer = randCfg;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+
+      const drawnMap = randCfg.weekAssignments[targetWeekKey] || {};
+      const summary = Object.entries(drawnMap)
+        .map(([d, sid]) => `${RANDOMIZER_DAY_NAMES[Number(d)] || d}: ${findSoundNameById(sid)}`)
+        .join(', ');
+
+      history.unshift({
+        id: `draw_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: now.toISOString(),
+        timeStr: `${hh}:${mm}:${ss}`,
+        bellType: 'bell_draw',
+        title:
+          singleDay !== null
+            ? `Ponowne losowanie na dzień: ${RANDOMIZER_DAY_NAMES[singleDay]} (${targetWeekKey})`
+            : `Ręczne losowanie dzwonków (${scope === 'next' ? 'przyszły tydzień' : 'bieżący tydzień'} ${targetWeekKey})`,
+        soundName:
+          singleDay !== null
+            ? findSoundNameById(drawnMap[singleDay])
+            : `${Object.keys(drawnMap).length} dni`,
+        status: 'simulated',
+        details: summary,
+      });
+      saveHistory();
+
+      res.json({
+        success: true,
+        scope,
+        targetWeekKey,
+        bellRandomizer: randCfg,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Błąd losowania dzwonków.' });
+    }
+  }
+);
 
 // 8. History log (Protected)
 app.get('/api/history', requireAnyPermission(['logs_view', 'dashboard_view']), (_req: Request, res: Response) => {

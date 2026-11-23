@@ -420,5 +420,26 @@
     "accentColor": "#fbbf24",
     "lessonColor": "#f59e0b",
     "breakColor": "#10b981"
+  },
+  "remoteBellsUrl": "https://sekretariat.zsme.pl/bells/",
+  "bellRandomizer": {
+    "enabled": false,
+    "drawDayOfWeek": 0,
+    "drawTime": "18:00",
+    "activeDays": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "sourceMode": "all_custom",
+    "selectedSoundIds": [],
+    "avoidRepeatsInWeek": true,
+    "noRepeatWeeks": 12,
+    "applyToWarningBell": false,
+    "lastDrawnAt": null,
+    "lastAutoDrawMarker": null,
+    "weekAssignments": {}
   }
 }

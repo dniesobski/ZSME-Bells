@@ -7,7 +7,8 @@ export type BellType =
   | 'radio_start'
   | 'radio_stop'
   | 'amplifier_on'
-  | 'amplifier_off';
+  | 'amplifier_off'
+  | 'bell_draw';
 
 export interface RadioStation {
   id: string;
@@ -58,6 +59,48 @@ export interface SoundTrack {
   isCustom?: boolean;
   fileUrl?: string;
   audioData?: string; // base64 if custom
+  remoteUrl?: string;
+  remoteFilename?: string;
+  syncedFromRemote?: boolean;
+  sizeBytes?: number;
+}
+
+export interface RemoteBellFile {
+  filename: string;
+  name: string;
+  url: string;
+  sizeLabel?: string;
+  modifiedAt?: string;
+  ext: string;
+  alreadyOnController: boolean;
+  localSoundId?: string;
+}
+
+export interface RemoteBellScanResult {
+  directoryUrl: string;
+  scannedAt: string;
+  files: RemoteBellFile[];
+  staleLocalSynced: {
+    id: string;
+    name: string;
+    filename: string;
+    remoteFilename?: string;
+  }[];
+}
+
+export interface BellRandomizerConfig {
+  enabled: boolean;
+  drawDayOfWeek: number; // 0 = Niedziela, 1 = Poniedziałek ... 6 = Sobota
+  drawTime: string; // "18:00"
+  activeDays: number[]; // e.g. [1,2,3,4,5] lub [1,2,3,4,5,6]
+  sourceMode: 'all_custom' | 'all_sounds' | 'selected_ids';
+  selectedSoundIds: string[];
+  avoidRepeatsInWeek: boolean;
+  noRepeatWeeks: number; // 4, 8, 12 lub inna liczba tygodni bez powtórzeń (1..52)
+  applyToWarningBell: boolean;
+  lastDrawnAt: string | null;
+  lastAutoDrawMarker?: string | null;
+  weekAssignments: Record<string, Record<number, string>>;
 }
 
 export interface SchoolHoliday {
@@ -123,6 +166,9 @@ export interface AppConfig {
   amplifierSchedule?: AmplifierRule[];
   // Personalizacja publicznego ekranu TV
   tvDisplay?: TvDisplayConfig;
+  // Katalog internetowy dzwonków i losowanie dzienne
+  remoteBellsUrl?: string;
+  bellRandomizer?: BellRandomizerConfig;
 }
 
 export interface TvDisplayConfig {
@@ -233,6 +279,13 @@ export interface SystemStatus {
   detectedAudioTool: string;
   platform: string;
   uptimeSeconds: number;
+  dailyRandomBell?: {
+    enabled: boolean;
+    soundId: string | null;
+    soundName: string | null;
+    weekKey: string;
+    dayOfWeek: number;
+  } | null;
 }
 
 export type PermissionKey =
