@@ -83,9 +83,10 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
   const [genStartHour, setGenStartHour] = useState('08:00');
   const [genCount, setGenCount] = useState(8);
   const [genLessonDuration, setGenLessonDuration] = useState(45);
-  const [genStandardBreak, setGenStandardBreak] = useState(10);
-  const [genLongBreakAfter, setGenLongBreakAfter] = useState(4);
-  const [genLongBreakDuration, setGenLongBreakDuration] = useState(15);
+  const [genStandardBreak, setGenStandardBreak] = useState(5);
+  const [genLongBreaks, setGenLongBreaks] = useState<{ afterLesson: number; durationMinutes: number }[]>([
+    { afterLesson: 4, durationMinutes: 15 },
+  ]);
 
   const currentProfile =
     localProfiles.find((p) => p.id === selectedProfileId) || localProfiles[0];
@@ -221,14 +222,78 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
     setSelectedProfileId(remaining[0].id);
   };
 
+  const maxPossibleLongBreaks = Math.max(0, genCount - 1);
+
+  const handleGenCountChange = (nextCountRaw: number) => {
+    const nextCount = Math.max(1, Math.min(20, Number.isFinite(nextCountRaw) ? Math.floor(nextCountRaw) : 1));
+    setGenCount(nextCount);
+    const maxBreaks = Math.max(0, nextCount - 1);
+    setGenLongBreaks((prev) => {
+      const valid = prev
+        .filter((lb) => lb.afterLesson >= 1 && lb.afterLesson <= maxBreaks)
+        .slice(0, maxBreaks);
+      return valid;
+    });
+  };
+
+  const handleLongBreakCountChange = (targetCountRaw: number) => {
+    const targetCount = Math.max(0, Math.min(maxPossibleLongBreaks, targetCountRaw));
+    setGenLongBreaks((prev) => {
+      if (targetCount <= prev.length) {
+        return prev.slice(0, targetCount);
+      }
+      const next = [...prev];
+      const usedLessons = new Set(next.map((b) => b.afterLesson));
+      const preferredOrder = [4, 5, 3, 6, 2, 7, 1, 8, 9, 10, 11, 12];
+      while (next.length < targetCount) {
+        let candidate = preferredOrder.find((n) => n <= maxPossibleLongBreaks && !usedLessons.has(n));
+        if (candidate === undefined) {
+          for (let n = 1; n <= maxPossibleLongBreaks; n++) {
+            if (!usedLessons.has(n)) {
+              candidate = n;
+              break;
+            }
+          }
+        }
+        if (candidate === undefined) break;
+        usedLessons.add(candidate);
+        next.push({ afterLesson: candidate, durationMinutes: 15 });
+      }
+      return next;
+    });
+  };
+
+  const handleUpdateLongBreak = (
+    idx: number,
+    updates: Partial<{ afterLesson: number; durationMinutes: number }>
+  ) => {
+    setGenLongBreaks((prev) =>
+      prev.map((item, i) => (i === idx ? { ...item, ...updates } : item))
+    );
+  };
+
+  const handleRemoveLongBreak = (idx: number) => {
+    setGenLongBreaks((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   // Run Generator Wizard
   const handleRunGenerator = () => {
-    const newItems: BellItem[] = [];
-    let currentTime = genStartHour;
+    const safeCount = Math.max(1, Math.min(20, genCount || 1));
+    const safeLessonDur = Math.max(1, genLessonDuration || 45);
+    const safeStdBreak = Math.max(0, Number.isFinite(genStandardBreak) ? genStandardBreak : 5);
+    const longBreakMap = new Map<number, number>();
+    for (const lb of genLongBreaks) {
+      if (lb.afterLesson >= 1 && lb.afterLesson < safeCount) {
+        longBreakMap.set(lb.afterLesson, Math.max(1, lb.durationMinutes || 15));
+      }
+    }
 
-    for (let i = 1; i <= genCount; i++) {
+    const newItems: BellItem[] = [];
+    let currentTime = genStartHour || '08:00';
+
+    for (let i = 1; i <= safeCount; i++) {
       const lessonStart = currentTime;
-      const lessonEnd = addMinutesToTime(lessonStart, genLessonDuration);
+      const lessonEnd = addMinutesToTime(lessonStart, safeLessonDur);
 
       newItems.push({
         id: `gen_lesson_${i}_${Date.now()}`,
@@ -244,8 +309,8 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
       });
 
       // Break duration after this lesson
-      if (i < genCount) {
-        const breakMins = i === genLongBreakAfter ? genLongBreakDuration : genStandardBreak;
+      if (i < safeCount) {
+        const breakMins = longBreakMap.get(i) ?? safeStdBreak;
         currentTime = addMinutesToTime(lessonEnd, breakMins);
       }
     }
@@ -255,7 +320,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
         p.id === selectedProfileId
           ? {
               ...p,
-              lessonDurationMinutes: genLessonDuration,
+              lessonDurationMinutes: safeLessonDur,
               items: newItems,
             }
           : p
@@ -451,8 +516,8 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
 
         {/* Generator Wizard Drawer (Expandable) */}
         {showGenerator && (
-          <div className="p-4 bg-slate-900 border border-amber-500/30 rounded-xl space-y-3 animate-fade-in">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+          <div className="p-4 bg-slate-900 border border-amber-500/30 rounded-xl space-y-4 animate-fade-in">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <Wand2 className="w-4 h-4 text-amber-400" />
                 <h4 className="text-xs font-bold text-white uppercase tracking-wider">
@@ -460,11 +525,11 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
                 </h4>
               </div>
               <span className="text-[11px] text-slate-400">
-                Automatycznie przeliczy kolejne godziny lekcji i przerw
+                Automatycznie przeliczy kolejne godziny lekcji, zwykłych przerw (domyślnie 5 min) i długich przerw
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 text-xs">
               <div>
                 <label className="block text-[11px] text-slate-400 mb-1">Godzina 1. lekcji</label>
                 <input
@@ -479,10 +544,10 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
                 <label className="block text-[11px] text-slate-400 mb-1">Liczba lekcji</label>
                 <input
                   type="number"
-                  min="1"
-                  max="12"
+                  min={1}
+                  max={20}
                   value={genCount}
-                  onChange={(e) => setGenCount(Number(e.target.value))}
+                  onChange={(e) => handleGenCountChange(Number(e.target.value))}
                   className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-200 font-mono"
                 />
               </div>
@@ -491,9 +556,10 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
                 <label className="block text-[11px] text-slate-400 mb-1">Długość lekcji (min)</label>
                 <input
                   type="number"
-                  step="5"
+                  min={1}
+                  max={180}
                   value={genLessonDuration}
-                  onChange={(e) => setGenLessonDuration(Number(e.target.value))}
+                  onChange={(e) => setGenLessonDuration(Math.max(1, Number(e.target.value)))}
                   className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-200 font-mono"
                 />
               </div>
@@ -502,37 +568,151 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
                 <label className="block text-[11px] text-slate-400 mb-1">Zwykła przerwa (min)</label>
                 <input
                   type="number"
-                  step="5"
+                  min={0}
+                  max={120}
                   value={genStandardBreak}
-                  onChange={(e) => setGenStandardBreak(Number(e.target.value))}
+                  onChange={(e) => setGenStandardBreak(Math.max(0, Number(e.target.value)))}
                   className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-200 font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Długa przerwa po</label>
+                <label className="block text-[11px] text-slate-400 mb-1">Ilość długich przerw</label>
                 <select
-                  value={genLongBreakAfter}
-                  onChange={(e) => setGenLongBreakAfter(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-200"
+                  value={genLongBreaks.length}
+                  disabled={maxPossibleLongBreaks === 0}
+                  onChange={(e) => handleLongBreakCountChange(Number(e.target.value))}
+                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-amber-300 font-mono disabled:opacity-50"
                 >
-                  {[3, 4, 5, 6].map((n) => (
-                    <option key={n} value={n}>
-                      {n}. lekcji
+                  {Array.from({ length: maxPossibleLongBreaks + 1 }, (_, i) => i).map((cnt) => (
+                    <option key={cnt} value={cnt}>
+                      {cnt === 0 ? '0 (brak)' : cnt}
                     </option>
                   ))}
                 </select>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1">Czas długiej przerwy</label>
-                <input
-                  type="number"
-                  step="5"
-                  value={genLongBreakDuration}
-                  onChange={(e) => setGenLongBreakDuration(Number(e.target.value))}
-                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-200 font-mono"
-                />
+            {/* Individual Long Breaks List */}
+            {genLongBreaks.length > 0 && (
+              <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="font-semibold text-amber-300 uppercase tracking-wider">
+                    Konfiguracja długich przerw ({genLongBreaks.length})
+                  </span>
+                  <span className="text-slate-400">
+                    Wybierz po której lekcji ma nastąpić dana długa przerwa oraz jej czas w minutach
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+                  {genLongBreaks.map((lb, idx) => {
+                    const takenByOthers = new Set(
+                      genLongBreaks.filter((_, i) => i !== idx).map((other) => other.afterLesson)
+                    );
+                    return (
+                      <div
+                        key={idx}
+                        className="p-2.5 rounded-lg bg-slate-900 border border-slate-700/80 flex items-end gap-2"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <label className="block text-[10px] text-slate-400 mb-1">
+                            Długa przerwa #{idx + 1} — po lekcji
+                          </label>
+                          <select
+                            value={lb.afterLesson}
+                            onChange={(e) =>
+                              handleUpdateLongBreak(idx, { afterLesson: Number(e.target.value) })
+                            }
+                            className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-slate-200 text-xs"
+                          >
+                            {Array.from({ length: maxPossibleLongBreaks }, (_, i) => i + 1).map((n) => (
+                              <option key={n} value={n} disabled={takenByOthers.has(n)}>
+                                Po {n}. lekcji{takenByOthers.has(n) ? ' (zajęta)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="w-24 shrink-0">
+                          <label className="block text-[10px] text-slate-400 mb-1">Czas (min)</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={120}
+                            value={lb.durationMinutes}
+                            onChange={(e) =>
+                              handleUpdateLongBreak(idx, {
+                                durationMinutes: Math.max(1, Number(e.target.value)),
+                              })
+                            }
+                            className="w-full px-2 py-1 bg-slate-800 border border-slate-700 rounded text-amber-300 font-mono text-xs"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLongBreak(idx)}
+                          title="Usuń tę długą przerwę"
+                          className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded transition-colors cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Live Preview of Generated Hours */}
+            <div className="p-2.5 rounded-lg bg-slate-950/50 border border-slate-800/80 text-[11px] space-y-1.5">
+              <div className="text-slate-400 font-medium">Podgląd wyliczonych godzin:</div>
+              <div className="flex flex-wrap gap-1.5">
+                {(() => {
+                  const previewItems: React.ReactNode[] = [];
+                  const longBreakMap = new Map<number, number>();
+                  for (const lb of genLongBreaks) {
+                    if (lb.afterLesson >= 1 && lb.afterLesson < genCount) {
+                      longBreakMap.set(lb.afterLesson, Math.max(1, lb.durationMinutes || 15));
+                    }
+                  }
+                  let t = genStartHour || '08:00';
+                  const safeDur = Math.max(1, genLessonDuration || 45);
+                  const safeStd = Math.max(0, Number.isFinite(genStandardBreak) ? genStandardBreak : 5);
+                  for (let i = 1; i <= genCount; i++) {
+                    const start = t;
+                    const end = addMinutesToTime(start, safeDur);
+                    const breakDur = i < genCount ? (longBreakMap.get(i) ?? safeStd) : null;
+                    const isLong = i < genCount && longBreakMap.has(i);
+                    previewItems.push(
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 border border-slate-700/80 font-mono text-slate-200"
+                      >
+                        <span className="text-amber-300 font-bold">{i}.</span>
+                        <span>
+                          {start}–{end}
+                        </span>
+                        {breakDur !== null && (
+                          <span
+                            className={`text-[10px] px-1 rounded ${
+                              isLong
+                                ? 'bg-amber-500/20 text-amber-300 font-semibold'
+                                : 'text-slate-400'
+                            }`}
+                          >
+                            +{breakDur}m
+                          </span>
+                        )}
+                      </span>
+                    );
+                    if (breakDur !== null) {
+                      t = addMinutesToTime(end, breakDur);
+                    }
+                  }
+                  return previewItems;
+                })()}
               </div>
             </div>
 
@@ -540,14 +720,14 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
               <button
                 type="button"
                 onClick={() => setShowGenerator(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
               >
                 Anuluj
               </button>
               <button
                 type="button"
                 onClick={handleRunGenerator}
-                className="px-4 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-sm"
+                className="px-4 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-sm cursor-pointer"
               >
                 Zastosuj i Wypełnij Harmonogram
               </button>

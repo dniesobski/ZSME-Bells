@@ -121,6 +121,32 @@ export interface AppConfig {
   amplifierAppendNewline?: boolean;
   amplifierRespectHolidays?: boolean;
   amplifierSchedule?: AmplifierRule[];
+  // Personalizacja publicznego ekranu TV
+  tvDisplay?: TvDisplayConfig;
+}
+
+export interface TvDisplayConfig {
+  headerTitle: string;
+  headerSubtitlePrefix: string;
+  nextBellTitle: string;
+  radioBlockTitle: string;
+  scheduleStripTitle: string;
+  footerModeText: string;
+  announcementText: string;
+  showHeader: boolean;
+  showDate: boolean;
+  showClockSeconds: boolean;
+  showProgressBar: boolean;
+  showNextBellBlock: boolean;
+  showRadioBlock: boolean;
+  showScheduleStrip: boolean;
+  backgroundColor: string;
+  panelColor: string;
+  textColor: string;
+  mutedTextColor: string;
+  accentColor: string;
+  lessonColor: string;
+  breakColor: string;
 }
 
 export interface AmplifierRule {
@@ -258,6 +284,7 @@ export interface TvPublicData {
   radioEnabled: boolean;
   radioStations: Pick<RadioStation, 'id' | 'name' | 'genre'>[];
   defaultRadioStationId: string;
+  tvDisplay?: TvDisplayConfig;
 }
 
 export interface DebianGitConfig {

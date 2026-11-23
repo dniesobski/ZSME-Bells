@@ -247,16 +247,15 @@ export const DebianGuideView: React.FC<DebianGuideViewProps> = ({ config, onImpo
     reader.readAsText(file);
   };
 
-  const quickInstallCommand = `# 1. Zaktualizuj system Debian 13 i zainstaluj pakiety bazowe
-sudo apt update && sudo apt install -y curl wget git alsa-utils mpv pulseaudio lm-sensors
+  const quickInstallCommand = `# 1. Zaktualizuj system Debian 13 i zainstaluj pakiety bazowe (jako root)
+apt update && apt install -y curl wget git alsa-utils mpv pulseaudio lm-sensors
 
 # 2. Pobierz i zainstaluj Node.js LTS
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
-sudo apt install -y nodejs
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
 
 # 3. Sklonuj aplikację do katalogu /opt/harmonia-bell
-sudo git clone https://github.com/dniesobski/ZSME-Bells.git /opt/harmonia-bell
-sudo chown -R $USER:$USER /opt/harmonia-bell
+git clone https://github.com/dniesobski/ZSME-Bells.git /opt/harmonia-bell
 cd /opt/harmonia-bell
 
 # 4. Zainstaluj biblioteki i uruchom
@@ -838,14 +837,14 @@ echo "Status: systemctl status harmonia-bell"
           <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60">
             <span className="text-slate-400 block mb-1">Sprawdzenie statusu usługi dzwonków:</span>
             <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
-              sudo systemctl status harmonia-bell
+              systemctl status harmonia-bell
             </code>
           </div>
 
           <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60">
             <span className="text-slate-400 block mb-1">Podgląd dziennika logów w czasie rzeczywistym:</span>
             <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
-              sudo journalctl -u harmonia-bell -f
+              journalctl -u harmonia-bell -f
             </code>
           </div>
 

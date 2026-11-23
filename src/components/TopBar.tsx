@@ -31,7 +31,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     { id: 'radio', label: 'Radio', requiredPerm: 'radio_control' },
     { id: 'sounds', label: 'Melodie', requiredPerm: 'sounds_manage' },
     { id: 'calendar', label: 'Kalendarz', requiredPerm: 'calendar_edit' },
-    { id: 'volume', label: 'Głośność', requiredPerm: 'volume_edit' },
+    { id: 'volume', label: 'Ustawienia', requiredPerm: 'volume_edit' },
     { id: 'tv', label: 'Ekran TV' },
     { id: 'debian', label: 'Debian 13', requiredPerm: 'debian_view' },
     { id: 'logs', label: 'Dziennik', requiredPerm: 'logs_view' },

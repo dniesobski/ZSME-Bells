@@ -11,14 +11,24 @@ import {
   Calendar,
   VolumeX,
   Moon,
+  Megaphone,
 } from 'lucide-react';
-import { AppConfig, SystemStatus, TvPublicData } from '../types/bell';
+import { AppConfig, SystemStatus, TvDisplayConfig, TvPublicData } from '../types/bell';
+import { DEFAULT_TV_DISPLAY_CONFIG } from '../data/defaultConfig';
 
 interface TvDisplayViewProps {
   status: SystemStatus | null;
   config: AppConfig;
   tvData?: TvPublicData | null;
   onExitTvMode: () => void;
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.slice(1) : '0f172a';
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
@@ -134,19 +144,32 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
+  const tvCfg: TvDisplayConfig = {
+    ...DEFAULT_TV_DISPLAY_CONFIG,
+    ...(config.tvDisplay || {}),
+    ...(tvData?.tvDisplay || {}),
+  };
+
   const activeProfile =
     tvData?.activeProfile ||
     config.schedules.find((s) => s.id === (status?.activeProfileId || config.activeProfileId)) ||
     config.schedules[0];
 
-  const schoolTitle = tvData?.schoolSubtitle || tvData?.schoolName || config.schoolSubtitle || config.schoolName;
+  const schoolTitle =
+    tvCfg.headerTitle.trim() ||
+    tvData?.schoolSubtitle ||
+    tvData?.schoolName ||
+    config.schoolSubtitle ||
+    config.schoolName;
+
   const radioEnabled = tvData ? tvData.radioEnabled : config.radioEnabled;
   const radioStations = tvData?.radioStations || config.radioStations || [];
   const defaultRadioStationId = tvData?.defaultRadioStationId || config.defaultRadioStationId;
 
-  const displayTime = status?.currentTimeStr || fallbackTime;
+  const rawTime = status?.currentTimeStr || fallbackTime;
+  const displayTime = tvCfg.showClockSeconds ? rawTime : rawTime.slice(0, 5);
   const periodType = status?.currentPeriod.type || 'before_school';
-  const nowHHMM = displayTime.slice(0, 5);
+  const nowHHMM = rawTime.slice(0, 5);
 
   const todayFormatted = new Date().toLocaleDateString('pl-PL', {
     weekday: 'long',
@@ -155,18 +178,18 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
     year: 'numeric',
   });
 
-  // Determine hero visual state
+  // Determine hero visual state with custom theme colors
   const getStatePresentation = () => {
     if (status?.isMuted) {
+      const color = '#f43f5e';
       return {
         badge: 'TRYB CICHY AKTYWNY',
         headline: 'Dzwonki zostały tymczasowo wyciszone',
         subline: status.currentPeriod.timeRange,
         icon: VolumeX,
-        cardBorder: 'border-rose-700/70',
-        cardBg: 'bg-rose-950/30',
-        badgeText: 'text-rose-300',
-        barColor: 'bg-rose-500',
+        accent: color,
+        cardBg: hexToRgba(color, 0.12),
+        cardBorder: hexToRgba(color, 0.55),
       };
     }
     if (status?.isHoliday) {
@@ -175,10 +198,9 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
         headline: status.holidayName || 'Święto / Dzień wolny',
         subline: 'Harmonogram dzwonków wstrzymany',
         icon: Moon,
-        cardBorder: 'border-amber-700/60',
-        cardBg: 'bg-amber-950/20',
-        badgeText: 'text-amber-300',
-        barColor: 'bg-amber-400',
+        accent: tvCfg.accentColor,
+        cardBg: hexToRgba(tvCfg.accentColor, 0.1),
+        cardBorder: hexToRgba(tvCfg.accentColor, 0.45),
       };
     }
     if (status?.isWeekend) {
@@ -187,10 +209,9 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
         headline: 'Brak zajęć szkolnych',
         subline: 'Harmonogram dzwonków jest dziś wyłączony',
         icon: Moon,
-        cardBorder: 'border-slate-700',
-        cardBg: 'bg-slate-900/60',
-        badgeText: 'text-slate-300',
-        barColor: 'bg-slate-500',
+        accent: tvCfg.mutedTextColor,
+        cardBg: hexToRgba(tvCfg.panelColor, 0.85),
+        cardBorder: hexToRgba(tvCfg.textColor, 0.14),
       };
     }
     if (periodType === 'break') {
@@ -199,10 +220,9 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
         headline: status?.currentPeriod.label || 'Przerwa',
         subline: status?.currentPeriod.timeRange || '',
         icon: Coffee,
-        cardBorder: 'border-emerald-600/70',
-        cardBg: 'bg-emerald-950/30',
-        badgeText: 'text-emerald-300',
-        barColor: 'bg-emerald-400',
+        accent: tvCfg.breakColor,
+        cardBg: hexToRgba(tvCfg.breakColor, 0.14),
+        cardBorder: hexToRgba(tvCfg.breakColor, 0.6),
       };
     }
     if (periodType === 'lesson') {
@@ -211,10 +231,9 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
         headline: status?.currentPeriod.label || 'Lekcja',
         subline: status?.currentPeriod.timeRange || '',
         icon: BookOpen,
-        cardBorder: 'border-amber-500/70',
-        cardBg: 'bg-amber-500/10',
-        badgeText: 'text-amber-300',
-        barColor: 'bg-amber-400',
+        accent: tvCfg.lessonColor,
+        cardBg: hexToRgba(tvCfg.lessonColor, 0.13),
+        cardBorder: hexToRgba(tvCfg.lessonColor, 0.6),
       };
     }
     if (periodType === 'before_school') {
@@ -223,10 +242,9 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
         headline: 'Oczekiwanie na pierwszą lekcję',
         subline: status?.currentPeriod.timeRange || '',
         icon: Clock,
-        cardBorder: 'border-sky-700/60',
-        cardBg: 'bg-sky-950/20',
-        badgeText: 'text-sky-300',
-        barColor: 'bg-sky-400',
+        accent: tvCfg.accentColor,
+        cardBg: hexToRgba(tvCfg.accentColor, 0.1),
+        cardBorder: hexToRgba(tvCfg.accentColor, 0.45),
       };
     }
     return {
@@ -234,18 +252,25 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
       headline: 'Zajęcia na dziś zostały zakończone',
       subline: status?.currentPeriod.timeRange || '',
       icon: Moon,
-      cardBorder: 'border-slate-700',
-      cardBg: 'bg-slate-900/60',
-      badgeText: 'text-slate-300',
-      barColor: 'bg-slate-500',
+      accent: tvCfg.mutedTextColor,
+      cardBg: hexToRgba(tvCfg.panelColor, 0.85),
+      cardBorder: hexToRgba(tvCfg.textColor, 0.14),
     };
   };
 
   const stateInfo = getStatePresentation();
   const StateIcon = stateInfo.icon;
+  const hasRightColumn = tvCfg.showNextBellBlock || tvCfg.showRadioBlock;
+  const subtleBorder = hexToRgba(tvCfg.textColor, 0.12);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-5 sm:p-8 lg:p-10 select-none relative overflow-hidden">
+    <div
+      className="min-h-screen flex flex-col justify-between p-5 sm:p-8 lg:p-10 select-none relative overflow-hidden transition-colors duration-300"
+      style={{
+        backgroundColor: tvCfg.backgroundColor,
+        color: tvCfg.textColor,
+      }}
+    >
       {/* Subtle auto-hiding top-right kiosk controls */}
       <div
         className={`fixed top-4 right-4 z-50 flex items-center gap-2 transition-opacity duration-300 ${
@@ -272,257 +297,388 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
       </div>
 
       {/* 1. TV Header Bar */}
-      <header className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-slate-800/90">
-        <div className="flex items-center gap-4">
-          <div className="w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
-            <Radio className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-              {schoolTitle}
-            </h1>
-            <div className="text-xs sm:text-sm text-slate-400 flex items-center gap-2">
-              <span>Harmonogram dnia:</span>
-              <span className="text-amber-300 font-semibold">{activeProfile.name}</span>
+      {tvCfg.showHeader && (
+        <header
+          className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b"
+          style={{ borderColor: subtleBorder }}
+        >
+          <div className="flex items-center gap-4">
+            <div
+              className="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0"
+              style={{
+                backgroundColor: hexToRgba(tvCfg.accentColor, 0.14),
+                borderColor: hexToRgba(tvCfg.accentColor, 0.35),
+                color: tvCfg.accentColor,
+              }}
+            >
+              <Radio className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight" style={{ color: tvCfg.textColor }}>
+                {schoolTitle}
+              </h1>
+              <div className="text-xs sm:text-sm flex items-center gap-2" style={{ color: tvCfg.mutedTextColor }}>
+                {tvCfg.headerSubtitlePrefix && <span>{tvCfg.headerSubtitlePrefix}</span>}
+                <span className="font-semibold" style={{ color: tvCfg.accentColor }}>
+                  {activeProfile.name}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3 text-right">
-          <div>
-            <div className="text-base sm:text-xl font-semibold text-white capitalize flex items-center gap-2 justify-end">
-              <Calendar className="w-5 h-5 text-amber-400 hidden sm:inline" />
-              <span>{todayFormatted}</span>
+          {tvCfg.showDate && (
+            <div className="flex items-center gap-3 text-right">
+              <div>
+                <div
+                  className="text-base sm:text-xl font-semibold capitalize flex items-center gap-2 justify-end"
+                  style={{ color: tvCfg.textColor }}
+                >
+                  <Calendar className="w-5 h-5 hidden sm:inline" style={{ color: tvCfg.accentColor }} />
+                  <span>{todayFormatted}</span>
+                </div>
+                <div className="text-xs sm:text-sm font-mono" style={{ color: tvCfg.mutedTextColor }}>
+                  {status?.isHoliday
+                    ? `Dzień wolny: ${status.holidayName}`
+                    : status?.isWeekend
+                    ? 'Dzień bez zajęć'
+                    : status?.isMuted
+                    ? 'System wyciszony'
+                    : 'System dzwonków aktywny'}
+                </div>
+              </div>
             </div>
-            <div className="text-xs sm:text-sm text-slate-400 font-mono">
-              {status?.isHoliday
-                ? `Dzień wolny: ${status.holidayName}`
-                : status?.isWeekend
-                ? 'Dzień bez zajęć'
-                : status?.isMuted
-                ? 'System wyciszony'
-                : 'System dzwonków aktywny'}
-            </div>
-          </div>
+          )}
+        </header>
+      )}
+
+      {/* Optional Announcement Banner */}
+      {tvCfg.announcementText && (
+        <div
+          className="mt-4 rounded-xl border px-5 py-3 flex items-center gap-3"
+          style={{
+            backgroundColor: hexToRgba(tvCfg.accentColor, 0.12),
+            borderColor: hexToRgba(tvCfg.accentColor, 0.45),
+          }}
+        >
+          <Megaphone className="w-5 h-5 shrink-0" style={{ color: tvCfg.accentColor }} />
+          <span className="text-sm sm:text-lg font-semibold tracking-tight" style={{ color: tvCfg.textColor }}>
+            {tvCfg.announcementText}
+          </span>
         </div>
-      </header>
+      )}
 
       {/* 2. Center Main Grid: Massive Clock + State + Next Bell + Radio */}
       <main className="my-auto py-6 grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
-        {/* Left Focal Card: Digital Clock & Current Lesson / Break State (7 cols) */}
+        {/* Left Focal Card: Digital Clock & Current Lesson / Break State */}
         <section
-          className={`xl:col-span-7 rounded-2xl border p-6 sm:p-8 lg:p-10 flex flex-col justify-between gap-6 ${stateInfo.cardBorder} ${stateInfo.cardBg}`}
+          className={`${
+            hasRightColumn ? 'xl:col-span-7' : 'xl:col-span-12'
+          } rounded-2xl border p-6 sm:p-8 lg:p-10 flex flex-col justify-between gap-6`}
+          style={{
+            backgroundColor: stateInfo.cardBg,
+            borderColor: stateInfo.cardBorder,
+          }}
         >
           {/* Clock Row */}
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2.5 text-sm sm:text-base font-bold tracking-wider uppercase">
-              <StateIcon className={`w-6 h-6 ${stateInfo.badgeText}`} />
-              <span className={stateInfo.badgeText}>{stateInfo.badge}</span>
+              <StateIcon className="w-6 h-6" style={{ color: stateInfo.accent }} />
+              <span style={{ color: stateInfo.accent }}>{stateInfo.badge}</span>
             </div>
 
-            {status && status.currentPeriod.totalSeconds > 0 && !status.isHoliday && !status.isWeekend && (
-              <div className="text-sm sm:text-base font-mono tabular-nums text-slate-300">
-                Postęp: <span className="font-bold text-white">{status.currentPeriod.progressPercent}%</span>
-              </div>
-            )}
+            {tvCfg.showProgressBar &&
+              status &&
+              status.currentPeriod.totalSeconds > 0 &&
+              !status.isHoliday &&
+              !status.isWeekend && (
+                <div className="text-sm sm:text-base font-mono tabular-nums" style={{ color: tvCfg.mutedTextColor }}>
+                  Postęp:{' '}
+                  <span className="font-bold" style={{ color: tvCfg.textColor }}>
+                    {status.currentPeriod.progressPercent}%
+                  </span>
+                </div>
+              )}
           </div>
 
           {/* Giant Clock */}
           <div>
-            <div className="text-[4.25rem] sm:text-[6.25rem] lg:text-[7.5rem] leading-none font-extrabold font-mono tabular-nums tracking-tight text-white">
+            <div
+              className="text-[4.25rem] sm:text-[6.25rem] lg:text-[7.5rem] leading-none font-extrabold font-mono tabular-nums tracking-tight"
+              style={{ color: tvCfg.textColor }}
+            >
               {displayTime}
             </div>
           </div>
 
           {/* Current Lesson / Break Headline + Progress Bar */}
-          <div className="space-y-4 pt-4 border-t border-slate-800/80">
+          <div className="space-y-4 pt-4 border-t" style={{ borderColor: subtleBorder }}>
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div>
-                <div className="text-2xl sm:text-4xl font-bold text-white tracking-tight">
+                <div className="text-2xl sm:text-4xl font-bold tracking-tight" style={{ color: tvCfg.textColor }}>
                   {stateInfo.headline}
                 </div>
                 {stateInfo.subline && (
-                  <div className="text-base sm:text-xl font-mono tabular-nums text-slate-300 mt-1">
+                  <div
+                    className="text-base sm:text-xl font-mono tabular-nums mt-1"
+                    style={{ color: tvCfg.mutedTextColor }}
+                  >
                     Godziny: {stateInfo.subline}
                   </div>
                 )}
               </div>
 
-              {status && status.currentPeriod.remainingSeconds > 0 && !status.isHoliday && !status.isWeekend && (
-                <div className="text-right">
-                  <span className="text-xs uppercase tracking-wider text-slate-400 block">
-                    Do końca pozostało
-                  </span>
-                  <span className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums text-white">
-                    {formatCountdown(status.currentPeriod.remainingSeconds)}
-                  </span>
-                </div>
-              )}
+              {tvCfg.showProgressBar &&
+                status &&
+                status.currentPeriod.remainingSeconds > 0 &&
+                !status.isHoliday &&
+                !status.isWeekend && (
+                  <div className="text-right">
+                    <span className="text-xs uppercase tracking-wider block" style={{ color: tvCfg.mutedTextColor }}>
+                      Do końca pozostało
+                    </span>
+                    <span
+                      className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums"
+                      style={{ color: tvCfg.textColor }}
+                    >
+                      {formatCountdown(status.currentPeriod.remainingSeconds)}
+                    </span>
+                  </div>
+                )}
             </div>
 
-            {status && status.currentPeriod.totalSeconds > 0 && !status.isHoliday && !status.isWeekend && (
-              <div className="w-full h-4 bg-slate-900/90 rounded-full overflow-hidden border border-slate-800">
+            {tvCfg.showProgressBar &&
+              status &&
+              status.currentPeriod.totalSeconds > 0 &&
+              !status.isHoliday &&
+              !status.isWeekend && (
                 <div
-                  className={`h-full ${stateInfo.barColor} transition-all duration-1000 ease-linear rounded-full`}
+                  className="w-full h-4 rounded-full overflow-hidden border"
                   style={{
-                    width: `${Math.min(100, Math.max(0, status.currentPeriod.progressPercent))}%`,
+                    backgroundColor: hexToRgba(tvCfg.backgroundColor, 0.75),
+                    borderColor: subtleBorder,
                   }}
-                />
-              </div>
-            )}
+                >
+                  <div
+                    className="h-full transition-all duration-1000 ease-linear rounded-full"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, status.currentPeriod.progressPercent))}%`,
+                      backgroundColor: stateInfo.accent,
+                    }}
+                  />
+                </div>
+              )}
           </div>
         </section>
 
         {/* Right Info Stack: Next Bell + Radio Status (5 cols) */}
-        <section className="xl:col-span-5 flex flex-col gap-6 justify-between">
-          {/* Next Bell Panel */}
-          <div className="flex-1 rounded-2xl bg-slate-900/90 border border-slate-800 p-6 sm:p-8 flex flex-col justify-between">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2.5 text-sm font-bold uppercase tracking-wider text-slate-300">
-                <Bell className="w-5 h-5 text-amber-400" />
-                <span>Następny Dzwonek</span>
-              </div>
-              {status?.nextBell && (
-                <span className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-amber-300">
-                  {status.nextBell.timeStr}
-                </span>
-              )}
-            </div>
-
-            {status?.nextBell && !status.isHoliday && !status.isWeekend ? (
-              <div className="py-4 space-y-4">
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold text-white">
-                    {status.nextBell.label}
+        {hasRightColumn && (
+          <section className="xl:col-span-5 flex flex-col gap-6 justify-between">
+            {/* Next Bell Panel */}
+            {tvCfg.showNextBellBlock && (
+              <div
+                className="flex-1 rounded-2xl border p-6 sm:p-8 flex flex-col justify-between"
+                style={{
+                  backgroundColor: tvCfg.panelColor,
+                  borderColor: subtleBorder,
+                }}
+              >
+                <div
+                  className="flex items-center justify-between pb-3 border-b"
+                  style={{ borderColor: subtleBorder }}
+                >
+                  <div
+                    className="flex items-center gap-2.5 text-sm font-bold uppercase tracking-wider"
+                    style={{ color: tvCfg.textColor }}
+                  >
+                    <Bell className="w-5 h-5" style={{ color: tvCfg.accentColor }} />
+                    <span>{tvCfg.nextBellTitle}</span>
                   </div>
-                  <div className="text-sm sm:text-base text-slate-400 mt-1">
-                    Melodia: <span className="text-amber-300 font-medium">{status.nextBell.soundName}</span>
-                  </div>
+                  {status?.nextBell && (
+                    <span
+                      className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums"
+                      style={{ color: tvCfg.accentColor }}
+                    >
+                      {status.nextBell.timeStr}
+                    </span>
+                  )}
                 </div>
 
-                <div className="pt-4 border-t border-slate-800/80 flex items-baseline justify-between">
-                  <span className="text-sm text-slate-400 uppercase tracking-wider font-medium">
-                    Odliczanie
-                  </span>
-                  <span className="text-3xl sm:text-4xl font-extrabold font-mono tabular-nums text-emerald-400">
-                    {formatCountdownCompact(status.nextBell.secondsRemaining)}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="py-8 text-center text-base text-slate-400">
-                Brak zaplanowanych dzwonków na pozostałą część dnia.
+                {status?.nextBell && !status.isHoliday && !status.isWeekend ? (
+                  <div className="py-4 space-y-4">
+                    <div>
+                      <div className="text-xl sm:text-2xl font-bold" style={{ color: tvCfg.textColor }}>
+                        {status.nextBell.label}
+                      </div>
+                      <div className="text-sm sm:text-base mt-1" style={{ color: tvCfg.mutedTextColor }}>
+                        Melodia:{' '}
+                        <span className="font-medium" style={{ color: tvCfg.accentColor }}>
+                          {status.nextBell.soundName}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className="pt-4 border-t flex items-baseline justify-between"
+                      style={{ borderColor: subtleBorder }}
+                    >
+                      <span
+                        className="text-sm uppercase tracking-wider font-medium"
+                        style={{ color: tvCfg.mutedTextColor }}
+                      >
+                        Odliczanie
+                      </span>
+                      <span
+                        className="text-3xl sm:text-4xl font-extrabold font-mono tabular-nums"
+                        style={{ color: tvCfg.breakColor }}
+                      >
+                        {formatCountdownCompact(status.nextBell.secondsRemaining)}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-base" style={{ color: tvCfg.mutedTextColor }}>
+                    Brak zaplanowanych dzwonków na pozostałą część dnia.
+                  </div>
+                )}
               </div>
             )}
-          </div>
 
-          {/* Radio On-Air Panel */}
-          <div
-            className={`rounded-2xl border p-6 sm:p-7 flex flex-col justify-between ${
-              status?.radioStatus?.isPlaying
-                ? 'bg-emerald-950/30 border-emerald-700/60'
-                : 'bg-slate-900/90 border-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
-              <div className="flex items-center gap-2.5 text-sm font-bold uppercase tracking-wider text-slate-300">
-                <Radio
-                  className={`w-5 h-5 ${
-                    status?.radioStatus?.isPlaying ? 'text-emerald-400' : 'text-slate-400'
-                  }`}
-                />
-                <span>Radiowęzeł Szkolny</span>
-              </div>
-              <span
-                className={`text-xs font-bold uppercase tracking-wider ${
-                  status?.radioStatus?.isPlaying ? 'text-emerald-400' : 'text-slate-500'
-                }`}
+            {/* Radio On-Air Panel */}
+            {tvCfg.showRadioBlock && (
+              <div
+                className="rounded-2xl border p-6 sm:p-7 flex flex-col justify-between"
+                style={{
+                  backgroundColor: status?.radioStatus?.isPlaying
+                    ? hexToRgba(tvCfg.breakColor, 0.14)
+                    : tvCfg.panelColor,
+                  borderColor: status?.radioStatus?.isPlaying
+                    ? hexToRgba(tvCfg.breakColor, 0.55)
+                    : subtleBorder,
+                }}
               >
-                {status?.radioStatus?.isPlaying ? 'Na antenie' : 'Cisza'}
-              </span>
-            </div>
-
-            <div className="pt-4">
-              {status?.radioStatus?.isPlaying ? (
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold text-white">
-                    {status.radioStatus.stationName}
-                  </div>
-                  <div className="text-sm text-emerald-300 mt-1">
-                    {status.radioStatus.mode === 'auto_break'
-                      ? 'Automatyczna muzyka podczas przerwy'
-                      : 'Audycja uruchomiona ręcznie'}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm sm:text-base text-slate-400">
-                  {radioEnabled
-                    ? `Radio włączy się automatycznie na wybranych przerwach (${
-                        radioStations.find((s) => s.id === defaultRadioStationId)?.name ||
-                        'Stacja domyślna'
-                      }).`
-                    : 'Automatyczna emisja radia na przerwach jest obecnie wyłączona.'}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      </main>
-
-      {/* 3. Bottom Strip: Today's Lesson & Break Timeline */}
-      <footer className="pt-5 border-t border-slate-800/90 space-y-3">
-        <div className="flex items-center justify-between text-xs sm:text-sm text-slate-400">
-          <span className="font-semibold uppercase tracking-wider text-slate-300">
-            Dzisiejszy Rozkład Lekcji ({activeProfile.items.length} lekcji)
-          </span>
-          <span className="font-mono text-slate-400">
-            Tryb wyświetlania: Publiczny Ekran TV
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
-          {activeProfile.items
-            .filter((item) => item.enabled)
-            .map((item, idx, arr) => {
-              const isCurrentLesson =
-                periodType === 'lesson' && status?.currentPeriod.label === item.name;
-              const isPast = !isCurrentLesson && nowHHMM >= item.endTime;
-              const hasRadioBreak =
-                idx < arr.length - 1 && radioEnabled && item.playRadioOnBreak;
-
-              return (
                 <div
-                  key={item.id}
-                  className={`rounded-xl border p-3 transition-colors ${
-                    isCurrentLesson
-                      ? 'bg-amber-500/15 border-amber-400 text-white'
-                      : isPast
-                      ? 'bg-slate-900/40 border-slate-800/70 text-slate-500'
-                      : 'bg-slate-900/80 border-slate-800 text-slate-200'
-                  }`}
+                  className="flex items-center justify-between pb-3 border-b"
+                  style={{ borderColor: subtleBorder }}
                 >
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className={isCurrentLesson ? 'text-amber-300' : ''}>
-                      {item.name}
-                    </span>
-                    {isCurrentLesson && (
-                      <span className="text-[10px] uppercase text-amber-300 font-mono">Teraz</span>
-                    )}
+                  <div
+                    className="flex items-center gap-2.5 text-sm font-bold uppercase tracking-wider"
+                    style={{ color: tvCfg.textColor }}
+                  >
+                    <Radio
+                      className="w-5 h-5"
+                      style={{
+                        color: status?.radioStatus?.isPlaying ? tvCfg.breakColor : tvCfg.mutedTextColor,
+                      }}
+                    />
+                    <span>{tvCfg.radioBlockTitle}</span>
                   </div>
-                  <div className="text-sm font-mono tabular-nums font-semibold mt-1">
-                    {item.startTime}–{item.endTime}
-                  </div>
-                  {hasRadioBreak && (
-                    <div className="text-[11px] text-emerald-400/90 mt-1 flex items-center gap-1">
-                      <Radio className="w-3 h-3 shrink-0" />
-                      <span className="truncate">Radio na przerwie</span>
+                  <span
+                    className="text-xs font-bold uppercase tracking-wider"
+                    style={{
+                      color: status?.radioStatus?.isPlaying ? tvCfg.breakColor : tvCfg.mutedTextColor,
+                    }}
+                  >
+                    {status?.radioStatus?.isPlaying ? 'Na antenie' : 'Cisza'}
+                  </span>
+                </div>
+
+                <div className="pt-4">
+                  {status?.radioStatus?.isPlaying ? (
+                    <div>
+                      <div className="text-xl sm:text-2xl font-bold" style={{ color: tvCfg.textColor }}>
+                        {status.radioStatus.stationName}
+                      </div>
+                      <div className="text-sm mt-1" style={{ color: tvCfg.breakColor }}>
+                        {status.radioStatus.mode === 'auto_break'
+                          ? 'Automatyczna muzyka podczas przerwy'
+                          : 'Audycja uruchomiona ręcznie'}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm sm:text-base" style={{ color: tvCfg.mutedTextColor }}>
+                      {radioEnabled
+                        ? `Radio włączy się automatycznie na wybranych przerwach (${
+                            radioStations.find((s) => s.id === defaultRadioStationId)?.name ||
+                            'Stacja domyślna'
+                          }).`
+                        : 'Automatyczna emisja radia na przerwach jest obecnie wyłączona.'}
                     </div>
                   )}
                 </div>
-              );
-            })}
-        </div>
-      </footer>
+              </div>
+            )}
+          </section>
+        )}
+      </main>
+
+      {/* 3. Bottom Strip: Today's Lesson & Break Timeline */}
+      {tvCfg.showScheduleStrip && (
+        <footer className="pt-5 border-t space-y-3" style={{ borderColor: subtleBorder }}>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
+            <span className="font-semibold uppercase tracking-wider" style={{ color: tvCfg.textColor }}>
+              {tvCfg.scheduleStripTitle} ({activeProfile.items.length} lekcji)
+            </span>
+            {tvCfg.footerModeText && (
+              <span className="font-mono" style={{ color: tvCfg.mutedTextColor }}>
+                {tvCfg.footerModeText}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+            {activeProfile.items
+              .filter((item) => item.enabled)
+              .map((item, idx, arr) => {
+                const isCurrentLesson =
+                  periodType === 'lesson' && status?.currentPeriod.label === item.name;
+                const isPast = !isCurrentLesson && nowHHMM >= item.endTime;
+                const hasRadioBreak =
+                  idx < arr.length - 1 && radioEnabled && item.playRadioOnBreak;
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border p-3 transition-colors"
+                    style={{
+                      backgroundColor: isCurrentLesson
+                        ? hexToRgba(tvCfg.lessonColor, 0.16)
+                        : isPast
+                        ? hexToRgba(tvCfg.panelColor, 0.45)
+                        : tvCfg.panelColor,
+                      borderColor: isCurrentLesson ? tvCfg.lessonColor : subtleBorder,
+                      color: isPast ? tvCfg.mutedTextColor : tvCfg.textColor,
+                      opacity: isPast ? 0.72 : 1,
+                    }}
+                  >
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span style={{ color: isCurrentLesson ? tvCfg.accentColor : undefined }}>
+                        {item.name}
+                      </span>
+                      {isCurrentLesson && (
+                        <span className="text-[10px] uppercase font-mono" style={{ color: tvCfg.accentColor }}>
+                          Teraz
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm font-mono tabular-nums font-semibold mt-1">
+                      {item.startTime}–{item.endTime}
+                    </div>
+                    {hasRadioBreak && (
+                      <div
+                        className="text-[11px] mt-1 flex items-center gap-1"
+                        style={{ color: tvCfg.breakColor }}
+                      >
+                        <Radio className="w-3 h-3 shrink-0" />
+                        <span className="truncate">Radio na przerwie</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        </footer>
+      )}
     </div>
   );
 };
+

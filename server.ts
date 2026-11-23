@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { ChildProcess, exec, execFile, execSync, spawn } from 'child_process';
-import { INITIAL_CONFIG } from './src/data/defaultConfig';
+import { DEFAULT_TV_DISPLAY_CONFIG, INITIAL_CONFIG } from './src/data/defaultConfig';
 import { PRESET_SOUNDS, getPresetWavBytes } from './src/utils/wavGenerator';
 import {
   AmplifierRule,
@@ -25,6 +25,7 @@ import {
   SoundTrack,
   SystemMetricsPoint,
   SystemStatus,
+  TvDisplayConfig,
   TvPublicData,
   UserAccountPublic,
 } from './src/types/bell';
@@ -87,6 +88,10 @@ if (fs.existsSync(CONFIG_FILE)) {
     if (!Array.isArray(config.amplifierSchedule)) {
       config.amplifierSchedule = INITIAL_CONFIG.amplifierSchedule;
     }
+    config.tvDisplay = {
+      ...DEFAULT_TV_DISPLAY_CONFIG,
+      ...(parsed.tvDisplay && typeof parsed.tvDisplay === 'object' ? parsed.tvDisplay : {}),
+    };
     // Migrate pre-Saturday weekMapping so Sunday stays silent while Saturday is configurable/active
     if (typeof parsed.weekMappingVersion !== 'number') {
       config.weekMapping = {
@@ -2354,9 +2359,79 @@ app.get('/api/tv-data', (_req: Request, res: Response) => {
       genre: s.genre,
     })),
     defaultRadioStationId: config.defaultRadioStationId,
+    tvDisplay: {
+      ...DEFAULT_TV_DISPLAY_CONFIG,
+      ...(config.tvDisplay || {}),
+    },
   };
   res.json(payload);
 });
+
+function sanitizeHexColor(val: unknown, fallback: string): string {
+  if (typeof val !== 'string') return fallback;
+  const trimmed = val.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;
+}
+
+function sanitizeTvText(val: unknown, fallback: string, maxLen: number = 140): string {
+  if (typeof val !== 'string') return fallback;
+  const cleaned = val.replace(/[\r\n\t]+/g, ' ').trim();
+  return cleaned.slice(0, maxLen);
+}
+
+function sanitizeTvDisplayConfig(raw: unknown): TvDisplayConfig | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  const base = {
+    ...DEFAULT_TV_DISPLAY_CONFIG,
+    ...(config.tvDisplay || {}),
+  };
+
+  return {
+    headerTitle:
+      'headerTitle' in src
+        ? sanitizeTvText(src.headerTitle, base.headerTitle, 140) || DEFAULT_TV_DISPLAY_CONFIG.headerTitle
+        : base.headerTitle,
+    headerSubtitlePrefix:
+      'headerSubtitlePrefix' in src
+        ? sanitizeTvText(src.headerSubtitlePrefix, base.headerSubtitlePrefix, 80)
+        : base.headerSubtitlePrefix,
+    nextBellTitle:
+      'nextBellTitle' in src
+        ? sanitizeTvText(src.nextBellTitle, base.nextBellTitle, 80) || DEFAULT_TV_DISPLAY_CONFIG.nextBellTitle
+        : base.nextBellTitle,
+    radioBlockTitle:
+      'radioBlockTitle' in src
+        ? sanitizeTvText(src.radioBlockTitle, base.radioBlockTitle, 80) || DEFAULT_TV_DISPLAY_CONFIG.radioBlockTitle
+        : base.radioBlockTitle,
+    scheduleStripTitle:
+      'scheduleStripTitle' in src
+        ? sanitizeTvText(src.scheduleStripTitle, base.scheduleStripTitle, 100) || DEFAULT_TV_DISPLAY_CONFIG.scheduleStripTitle
+        : base.scheduleStripTitle,
+    footerModeText:
+      'footerModeText' in src
+        ? sanitizeTvText(src.footerModeText, base.footerModeText, 120)
+        : base.footerModeText,
+    announcementText:
+      'announcementText' in src
+        ? sanitizeTvText(src.announcementText, '', 260)
+        : base.announcementText,
+    showHeader: 'showHeader' in src ? Boolean(src.showHeader) : base.showHeader,
+    showDate: 'showDate' in src ? Boolean(src.showDate) : base.showDate,
+    showClockSeconds: 'showClockSeconds' in src ? Boolean(src.showClockSeconds) : base.showClockSeconds,
+    showProgressBar: 'showProgressBar' in src ? Boolean(src.showProgressBar) : base.showProgressBar,
+    showNextBellBlock: 'showNextBellBlock' in src ? Boolean(src.showNextBellBlock) : base.showNextBellBlock,
+    showRadioBlock: 'showRadioBlock' in src ? Boolean(src.showRadioBlock) : base.showRadioBlock,
+    showScheduleStrip: 'showScheduleStrip' in src ? Boolean(src.showScheduleStrip) : base.showScheduleStrip,
+    backgroundColor: sanitizeHexColor(src.backgroundColor, base.backgroundColor),
+    panelColor: sanitizeHexColor(src.panelColor, base.panelColor),
+    textColor: sanitizeHexColor(src.textColor, base.textColor),
+    mutedTextColor: sanitizeHexColor(src.mutedTextColor, base.mutedTextColor),
+    accentColor: sanitizeHexColor(src.accentColor, base.accentColor),
+    lessonColor: sanitizeHexColor(src.lessonColor, base.lessonColor),
+    breakColor: sanitizeHexColor(src.breakColor, base.breakColor),
+  };
+}
 
 // 2. Config API (Protected + Section-level RBAC verification)
 app.get('/api/config', requireAuth, (_req: Request, res: Response) => {
@@ -2394,6 +2469,7 @@ const CONFIG_KEY_PERMISSIONS: Record<string, PermissionKey[]> = {
   amplifierAppendNewline: ['volume_edit'],
   amplifierRespectHolidays: ['schedules_edit', 'volume_edit'],
   amplifierSchedule: ['schedules_edit', 'volume_edit'],
+  tvDisplay: ['volume_edit', 'schedules_edit', 'users_manage'],
 };
 
 app.post('/api/config', requireAuth, (req: AuthenticatedRequest, res: Response) => {
@@ -2427,6 +2503,14 @@ app.post('/api/config', requireAuth, (req: AuthenticatedRequest, res: Response) 
       if (!Array.isArray(incoming.amplifierSchedule)) {
         return res.status(400).json({ success: false, error: 'Nieprawidłowy format harmonogramu wzmacniacza.' });
       }
+    }
+
+    if ('tvDisplay' in incoming && incoming.tvDisplay !== undefined) {
+      const sanitizedTv = sanitizeTvDisplayConfig(incoming.tvDisplay);
+      if (!sanitizedTv) {
+        return res.status(400).json({ success: false, error: 'Nieprawidłowy format ustawień ekranu TV.' });
+      }
+      incoming.tvDisplay = sanitizedTv;
     }
 
     config = { ...config, ...incoming } as AppConfig;
@@ -3208,14 +3292,11 @@ function getAppVersion(): string {
   return '1.0.0 (Debian 13)';
 }
 
-async function hasAptPrivilege(): Promise<{ available: boolean; prefix: string }> {
+async function hasAptPrivilege(): Promise<{ available: boolean; isRoot: boolean }> {
   const aptCheck = await runCommandFile('which', ['apt-get'], 3000);
-  if (!aptCheck.ok) return { available: false, prefix: '' };
+  if (!aptCheck.ok) return { available: false, isRoot: false };
   const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  if (isRoot) return { available: true, prefix: '' };
-  const sudoCheck = await runCommandFile('sudo', ['-n', 'true'], 3000);
-  if (sudoCheck.ok) return { available: true, prefix: 'sudo -n ' };
-  return { available: true, prefix: 'NO_ROOT' };
+  return { available: true, isRoot };
 }
 
 async function inspectGitUpdateStatus(savedConfig: DebianGitConfig | null): Promise<DebianUpdateCheckResult['git']> {
@@ -3402,8 +3483,8 @@ async function performDebianUpdateCheck(options?: { checkApt?: boolean }): Promi
     const aptPriv = await hasAptPrivilege();
     if (aptPriv.available) {
       aptInfo.available = true;
-      if (aptPriv.prefix !== 'NO_ROOT') {
-        await runShellAsync(`${aptPriv.prefix}apt-get update -qq 2>/dev/null`, 25000);
+      if (aptPriv.isRoot) {
+        await runCommandFile('apt-get', ['update', '-qq'], 25000);
       }
       const listRes = await runCommandFile('apt', ['list', '--upgradable'], 10000);
       if (listRes.ok) {
@@ -3413,17 +3494,15 @@ async function performDebianUpdateCheck(options?: { checkApt?: boolean }): Promi
           .filter((l) => l && !l.startsWith('Listing...') && !l.startsWith('Wyświetlanie'));
         aptInfo.upgradableCount = lines.length;
         aptInfo.upgradablePackages = lines.slice(0, 15).map((l) => l.split('/')[0]);
-        aptInfo.note =
-          aptPriv.prefix === 'NO_ROOT'
-            ? `Wykryto ${lines.length} pakietów (odczyt bez uprawnień root — odświeżenie list wymaga sudo/root).`
-            : lines.length > 0
-            ? `Dostępne aktualizacje pakietów Debian (${lines.length}).`
-            : 'Wszystkie pakiety systemu Debian 13 są aktualne.';
+        aptInfo.note = !aptPriv.isRoot
+          ? `Wykryto ${lines.length} pakietów (odczyt bez uprawnień root — odświeżenie list wymaga uruchomienia usługi jako root).`
+          : lines.length > 0
+          ? `Dostępne aktualizacje pakietów Debian (${lines.length}).`
+          : 'Wszystkie pakiety systemu Debian 13 są aktualne.';
       } else {
-        aptInfo.note =
-          aptPriv.prefix === 'NO_ROOT'
-            ? 'Brak uprawnień root/sudo do odświeżenia list APT.'
-            : 'Nie udało się odczytać listy pakietów APT.';
+        aptInfo.note = !aptPriv.isRoot
+          ? 'Brak uprawnień root do odświeżenia list APT.'
+          : 'Nie udało się odczytać listy pakietów APT.';
       }
     }
   }
@@ -3556,19 +3635,19 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
       const aptPriv = await hasAptPrivilege();
       if (!aptPriv.available) {
         appendUpdateLog('Menedżer pakietów APT nie jest dostępny w tym środowisku.');
-      } else if (aptPriv.prefix === 'NO_ROOT') {
+      } else if (!aptPriv.isRoot) {
         appendUpdateLog(
-          'Pominięto apt-get upgrade: serwer nie działa z uprawnieniami root ani bezhasłowego sudo. Na serwerze Debian uruchom jako root lub wykonaj: sudo apt update && sudo apt upgrade -y'
+          'Pominięto apt-get upgrade: usługa nie działa z uprawnieniami root. Na serwerze Debian uruchom usługę jako root lub wykonaj jako root: apt update && apt upgrade -y'
         );
       } else {
         appendUpdateLog('Odświeżanie repozytoriów Debian 13 (apt-get update)...');
-        const aptUpd = await runShellAsync(`${aptPriv.prefix}apt-get update -y 2>&1`, 120000);
+        const aptUpd = await runShellAsync('apt-get update -y 2>&1', 120000);
         if (!aptUpd.ok) {
           throw new Error(`Błąd apt-get update: ${aptUpd.stderr || aptUpd.stdout || aptUpd.errorMessage}`);
         }
         appendUpdateLog('Instalowanie aktualizacji pakietów systemowych (apt-get upgrade -y)...');
         const aptUpg = await runShellAsync(
-          `DEBIAN_FRONTEND=noninteractive ${aptPriv.prefix}apt-get upgrade -y 2>&1`,
+          'DEBIAN_FRONTEND=noninteractive apt-get upgrade -y 2>&1',
           600000
         );
         if (!aptUpg.ok) {
@@ -3622,7 +3701,7 @@ app.post('/api/debian/git-config', requireAnyPermission(['debian_view']), async 
     if (!gitBin.ok) {
       return res.status(500).json({
         success: false,
-        error: 'Narzędzie Git nie jest zainstalowane w systemie Debian (zainstaluj pakiet: sudo apt install -y git).',
+        error: 'Narzędzie Git nie jest zainstalowane w systemie Debian (zainstaluj pakiet jako root: apt install -y git).',
       });
     }
 

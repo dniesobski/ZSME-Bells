@@ -1,7 +1,141 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Volume2, Speaker, Save, Check, Plus, Trash2, Cpu, Power, Terminal, RefreshCw } from 'lucide-react';
-import { AppConfig, DetectedSerialPort, SystemStatus, VolumeRule } from '../types/bell';
+import {
+  Volume2,
+  Speaker,
+  Save,
+  Check,
+  Plus,
+  Trash2,
+  Cpu,
+  Power,
+  Terminal,
+  RefreshCw,
+  Tv,
+  Palette,
+  RotateCcw,
+  Eye,
+  Type,
+  LayoutGrid,
+} from 'lucide-react';
+import { AppConfig, DetectedSerialPort, SystemStatus, TvDisplayConfig, VolumeRule } from '../types/bell';
+import { DEFAULT_TV_DISPLAY_CONFIG } from '../data/defaultConfig';
 import { apiFetch } from '../utils/apiClient';
+
+interface TvColorPreset {
+  id: string;
+  label: string;
+  colors: Pick<
+    TvDisplayConfig,
+    | 'backgroundColor'
+    | 'panelColor'
+    | 'textColor'
+    | 'mutedTextColor'
+    | 'accentColor'
+    | 'lessonColor'
+    | 'breakColor'
+  >;
+}
+
+const TV_COLOR_PRESETS: TvColorPreset[] = [
+  {
+    id: 'default_dark',
+    label: 'Domyślny Ciemny',
+    colors: {
+      backgroundColor: DEFAULT_TV_DISPLAY_CONFIG.backgroundColor,
+      panelColor: DEFAULT_TV_DISPLAY_CONFIG.panelColor,
+      textColor: DEFAULT_TV_DISPLAY_CONFIG.textColor,
+      mutedTextColor: DEFAULT_TV_DISPLAY_CONFIG.mutedTextColor,
+      accentColor: DEFAULT_TV_DISPLAY_CONFIG.accentColor,
+      lessonColor: DEFAULT_TV_DISPLAY_CONFIG.lessonColor,
+      breakColor: DEFAULT_TV_DISPLAY_CONFIG.breakColor,
+    },
+  },
+  {
+    id: 'school_navy',
+    label: 'Granat Szkolny',
+    colors: {
+      backgroundColor: '#071126',
+      panelColor: '#0f2147',
+      textColor: '#f8fafc',
+      mutedTextColor: '#94a3b8',
+      accentColor: '#38bdf8',
+      lessonColor: '#60a5fa',
+      breakColor: '#34d399',
+    },
+  },
+  {
+    id: 'high_contrast',
+    label: 'Wysoki Kontrast',
+    colors: {
+      backgroundColor: '#000000',
+      panelColor: '#111827',
+      textColor: '#ffffff',
+      mutedTextColor: '#d1d5db',
+      accentColor: '#facc15',
+      lessonColor: '#fb923c',
+      breakColor: '#4ade80',
+    },
+  },
+  {
+    id: 'light_day',
+    label: 'Jasny Dzienny',
+    colors: {
+      backgroundColor: '#f1f5f9',
+      panelColor: '#ffffff',
+      textColor: '#0f172a',
+      mutedTextColor: '#475569',
+      accentColor: '#d97706',
+      lessonColor: '#b45309',
+      breakColor: '#059669',
+    },
+  },
+];
+
+function previewHexToRgba(hex: string, alpha: number): string {
+  const clean = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.slice(1) : '0f172a';
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+type TvColorField =
+  | 'backgroundColor'
+  | 'panelColor'
+  | 'textColor'
+  | 'mutedTextColor'
+  | 'accentColor'
+  | 'lessonColor'
+  | 'breakColor';
+
+type TvToggleField =
+  | 'showHeader'
+  | 'showDate'
+  | 'showClockSeconds'
+  | 'showProgressBar'
+  | 'showNextBellBlock'
+  | 'showRadioBlock'
+  | 'showScheduleStrip';
+
+const TV_BLOCK_OPTIONS: { key: TvToggleField; label: string; hint: string }[] = [
+  { key: 'showHeader', label: 'Nagłówek z nazwą szkoły i profilem', hint: 'Górny pasek informacyjny na ekranie TV' },
+  { key: 'showDate', label: 'Data i status systemu w nagłówku', hint: 'Bieżąca data oraz stan aktywności dzwonków' },
+  { key: 'showClockSeconds', label: 'Sekundy w zegarze głównym', hint: 'Wyświetla GG:MM:SS zamiast samego GG:MM' },
+  { key: 'showProgressBar', label: 'Pasek postępu i odliczanie lekcji/przerwy', hint: 'Procent postępu, pozostały czas i pasek na dole karty' },
+  { key: 'showNextBellBlock', label: 'Blok "Następny Dzwonek"', hint: 'Prawa górna karta z godziną i nazwą kolejnego dzwonka' },
+  { key: 'showRadioBlock', label: 'Blok "Radiowęzeł Szkolny"', hint: 'Prawa dolna karta ze statusem odtwarzania radia' },
+  { key: 'showScheduleStrip', label: 'Dolny pasek z rozkładem lekcji', hint: 'Kafelki wszystkich aktywnych lekcji na dziś' },
+];
+
+const TV_COLOR_FIELDS: { key: TvColorField; label: string; hint: string }[] = [
+  { key: 'backgroundColor', label: 'Tło całego ekranu', hint: 'Główne tło strony /tv' },
+  { key: 'panelColor', label: 'Tło paneli i kart', hint: 'Kafelki dzwonka, radia i lekcji' },
+  { key: 'textColor', label: 'Tekst główny', hint: 'Zegar, nagłówki i główne opisy' },
+  { key: 'mutedTextColor', label: 'Tekst pomocniczy', hint: 'Podpisy, godziny i etykiety' },
+  { key: 'accentColor', label: 'Kolor akcentu', hint: 'Ikony, nazwa profilu, ogłoszenia' },
+  { key: 'lessonColor', label: 'Kolor lekcji', hint: 'Karta i pasek w trakcie trwania lekcji' },
+  { key: 'breakColor', label: 'Kolor przerwy / odliczania', hint: 'Przerwa, status radia i licznik czasu' },
+];
 
 interface VolumeViewProps {
   config: AppConfig;
@@ -37,6 +171,10 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
   const [amplifierAppendNewline, setAmplifierAppendNewline] = useState(
     Boolean(config.amplifierAppendNewline)
   );
+  const [tvDisplay, setTvDisplay] = useState<TvDisplayConfig>(() => ({
+    ...DEFAULT_TV_DISPLAY_CONFIG,
+    ...(config.tvDisplay || {}),
+  }));
   const [isTestingAmp, setIsTestingAmp] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -77,6 +215,25 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
     void fetchDetectedSerialPorts();
   }, [fetchDetectedSerialPorts]);
 
+  useEffect(() => {
+    setTvDisplay({
+      ...DEFAULT_TV_DISPLAY_CONFIG,
+      ...(config.tvDisplay || {}),
+    });
+  }, [config.tvDisplay]);
+
+  const updateTvDisplay = (patch: Partial<TvDisplayConfig>) => {
+    setTvDisplay((prev) => ({ ...prev, ...patch }));
+  };
+
+  const applyTvColorPreset = (preset: TvColorPreset) => {
+    setTvDisplay((prev) => ({ ...prev, ...preset.colors }));
+  };
+
+  const resetTvDisplayToDefaults = () => {
+    setTvDisplay({ ...DEFAULT_TV_DISPLAY_CONFIG });
+  };
+
   const handleAddRule = () => {
     const newRule: VolumeRule = {
       id: `v_${Date.now()}`,
@@ -114,6 +271,21 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
   const handleSave = async () => {
     try {
       setIsSaving(true);
+      const validHex = (val: string, fallback: string) =>
+        /^#[0-9a-fA-F]{6}$/.test(val.trim()) ? val.trim().toLowerCase() : fallback;
+
+      const normalizedTvDisplay: TvDisplayConfig = {
+        ...tvDisplay,
+        backgroundColor: validHex(tvDisplay.backgroundColor, DEFAULT_TV_DISPLAY_CONFIG.backgroundColor),
+        panelColor: validHex(tvDisplay.panelColor, DEFAULT_TV_DISPLAY_CONFIG.panelColor),
+        textColor: validHex(tvDisplay.textColor, DEFAULT_TV_DISPLAY_CONFIG.textColor),
+        mutedTextColor: validHex(tvDisplay.mutedTextColor, DEFAULT_TV_DISPLAY_CONFIG.mutedTextColor),
+        accentColor: validHex(tvDisplay.accentColor, DEFAULT_TV_DISPLAY_CONFIG.accentColor),
+        lessonColor: validHex(tvDisplay.lessonColor, DEFAULT_TV_DISPLAY_CONFIG.lessonColor),
+        breakColor: validHex(tvDisplay.breakColor, DEFAULT_TV_DISPLAY_CONFIG.breakColor),
+      };
+      setTvDisplay(normalizedTvDisplay);
+
       await onSaveConfig({
         ...config,
         masterVolume,
@@ -126,6 +298,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
         amplifierControlEnabled,
         amplifierDevicePath: amplifierDevicePath.trim() || '/dev/tty1',
         amplifierAppendNewline,
+        tvDisplay: normalizedTvDisplay,
       });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -584,6 +757,439 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
                 <Power className="w-3.5 h-3.5" />
                 <span>Wyłącz (wyślij 0)</span>
               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Public TV Screen Customization (/tv) */}
+      <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-700/60">
+          <div className="flex items-center gap-2.5">
+            <Tv className="w-4 h-4 text-amber-400" />
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                Personalizacja Publicznego Ekranu TV (Teksty, Bloki i Kolory)
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Dostosuj napisy nagłówków, widoczność poszczególnych sekcji oraz paletę kolorów wyświetlaną na ekranie{' '}
+                <code className="font-mono text-amber-300">/tv</code>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={resetTvDisplayToDefaults}
+              className="px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-900 hover:bg-slate-700 border border-slate-700 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+              <span>Przywróć domyślne</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+            >
+              {saveSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+              <span>{isSaving ? 'Zapisywanie...' : saveSuccess ? 'Zapisano!' : 'Zapisz ustawienia TV'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Color Presets Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-slate-900/60 border border-slate-700/60">
+          <div className="flex items-center gap-2 text-xs text-slate-300 font-medium">
+            <Palette className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Szybkie motywy kolorystyczne:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {TV_COLOR_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => applyTvColorPreset(preset)}
+                className="px-2.5 py-1.5 rounded-md bg-slate-950/80 hover:bg-slate-800 border border-slate-700 text-[11px] text-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center -space-x-1">
+                  <span
+                    className="w-3 h-3 rounded-full border border-white/20"
+                    style={{ backgroundColor: preset.colors.backgroundColor }}
+                  />
+                  <span
+                    className="w-3 h-3 rounded-full border border-white/20"
+                    style={{ backgroundColor: preset.colors.accentColor }}
+                  />
+                  <span
+                    className="w-3 h-3 rounded-full border border-white/20"
+                    style={{ backgroundColor: preset.colors.breakColor }}
+                  />
+                </span>
+                <span>{preset.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Live Mini-Preview */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5 text-amber-400" />
+              Podgląd układu i kolorów ekranu TV na żywo
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Zmiany są widoczne natychmiast na podglądzie — kliknij Zapisz, aby wysłać na ekran TV
+            </span>
+          </div>
+
+          <div
+            className="rounded-xl border border-slate-700 p-4 space-y-3 transition-colors duration-200"
+            style={{
+              backgroundColor: /^#[0-9a-fA-F]{6}$/.test(tvDisplay.backgroundColor)
+                ? tvDisplay.backgroundColor
+                : DEFAULT_TV_DISPLAY_CONFIG.backgroundColor,
+              color: /^#[0-9a-fA-F]{6}$/.test(tvDisplay.textColor)
+                ? tvDisplay.textColor
+                : DEFAULT_TV_DISPLAY_CONFIG.textColor,
+            }}
+          >
+            {tvDisplay.showHeader && (
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b"
+                style={{ borderColor: previewHexToRgba(tvDisplay.textColor, 0.14) }}
+              >
+                <div>
+                  <div className="text-sm font-bold leading-tight">
+                    {tvDisplay.headerTitle.trim() || config.schoolSubtitle || config.schoolName}
+                  </div>
+                  <div className="text-[11px]" style={{ color: tvDisplay.mutedTextColor }}>
+                    {tvDisplay.headerSubtitlePrefix ? `${tvDisplay.headerSubtitlePrefix} ` : ''}
+                    <span className="font-semibold" style={{ color: tvDisplay.accentColor }}>
+                      Standardowy (45 min)
+                    </span>
+                  </div>
+                </div>
+                {tvDisplay.showDate && (
+                  <div className="text-right text-[11px]" style={{ color: tvDisplay.mutedTextColor }}>
+                    <div className="font-semibold" style={{ color: tvDisplay.textColor }}>
+                      Poniedziałek, 23 listopada
+                    </div>
+                    <div>System dzwonków aktywny</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tvDisplay.announcementText.trim() && (
+              <div
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold"
+                style={{
+                  backgroundColor: previewHexToRgba(tvDisplay.accentColor, 0.14),
+                  borderColor: previewHexToRgba(tvDisplay.accentColor, 0.45),
+                }}
+              >
+                {tvDisplay.announcementText}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+              <div
+                className={`${
+                  tvDisplay.showNextBellBlock || tvDisplay.showRadioBlock ? 'md:col-span-7' : 'md:col-span-12'
+                } rounded-lg border p-3.5 space-y-2`}
+                style={{
+                  backgroundColor: previewHexToRgba(tvDisplay.lessonColor, 0.13),
+                  borderColor: previewHexToRgba(tvDisplay.lessonColor, 0.55),
+                }}
+              >
+                <div className="flex items-center justify-between text-[11px] font-bold uppercase">
+                  <span style={{ color: tvDisplay.lessonColor }}>TRWA LEKCJA</span>
+                  {tvDisplay.showProgressBar && (
+                    <span className="font-mono" style={{ color: tvDisplay.mutedTextColor }}>
+                      Postęp: <strong style={{ color: tvDisplay.textColor }}>64%</strong>
+                    </span>
+                  )}
+                </div>
+                <div className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums tracking-tight">
+                  {tvDisplay.showClockSeconds ? '10:15:42' : '10:15'}
+                </div>
+                <div className="text-xs font-bold">Lekcja 3 (09:50–10:35)</div>
+                {tvDisplay.showProgressBar && (
+                  <div
+                    className="w-full h-2 rounded-full overflow-hidden"
+                    style={{ backgroundColor: previewHexToRgba(tvDisplay.backgroundColor, 0.7) }}
+                  >
+                    <div
+                      className="h-full rounded-full w-2/3"
+                      style={{ backgroundColor: tvDisplay.lessonColor }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {(tvDisplay.showNextBellBlock || tvDisplay.showRadioBlock) && (
+                <div className="md:col-span-5 flex flex-col gap-2.5">
+                  {tvDisplay.showNextBellBlock && (
+                    <div
+                      className="rounded-lg border p-3 space-y-1 flex-1"
+                      style={{
+                        backgroundColor: tvDisplay.panelColor,
+                        borderColor: previewHexToRgba(tvDisplay.textColor, 0.12),
+                      }}
+                    >
+                      <div className="flex items-center justify-between text-[11px] font-bold uppercase">
+                        <span>{tvDisplay.nextBellTitle || 'Następny Dzwonek'}</span>
+                        <span className="font-mono" style={{ color: tvDisplay.accentColor }}>
+                          10:35
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold">Koniec Lekcji 3</div>
+                      <div className="text-[11px] font-mono font-bold" style={{ color: tvDisplay.breakColor }}>
+                        Odliczanie: 19:18
+                      </div>
+                    </div>
+                  )}
+
+                  {tvDisplay.showRadioBlock && (
+                    <div
+                      className="rounded-lg border p-3 space-y-1"
+                      style={{
+                        backgroundColor: previewHexToRgba(tvDisplay.breakColor, 0.14),
+                        borderColor: previewHexToRgba(tvDisplay.breakColor, 0.55),
+                      }}
+                    >
+                      <div className="flex items-center justify-between text-[11px] font-bold uppercase">
+                        <span>{tvDisplay.radioBlockTitle || 'Radiowęzeł Szkolny'}</span>
+                        <span style={{ color: tvDisplay.breakColor }}>Na antenie</span>
+                      </div>
+                      <div className="text-xs font-semibold">SomaFM Groove Salad</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {tvDisplay.showScheduleStrip && (
+              <div
+                className="pt-2.5 border-t space-y-2"
+                style={{ borderColor: previewHexToRgba(tvDisplay.textColor, 0.12) }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="font-bold uppercase tracking-wider">
+                    {tvDisplay.scheduleStripTitle || 'Dzisiejszy Rozkład Lekcji'}
+                  </span>
+                  {tvDisplay.footerModeText && (
+                    <span className="font-mono" style={{ color: tvDisplay.mutedTextColor }}>
+                      {tvDisplay.footerModeText}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {['Lekcja 1', 'Lekcja 2', 'Lekcja 3', 'Lekcja 4'].map((item, idx) => (
+                    <div
+                      key={item}
+                      className="rounded border px-2 py-1.5 text-[10px]"
+                      style={{
+                        backgroundColor:
+                          idx === 2 ? previewHexToRgba(tvDisplay.lessonColor, 0.16) : tvDisplay.panelColor,
+                        borderColor:
+                          idx === 2 ? tvDisplay.lessonColor : previewHexToRgba(tvDisplay.textColor, 0.12),
+                        color: idx < 2 ? tvDisplay.mutedTextColor : tvDisplay.textColor,
+                      }}
+                    >
+                      <div className="font-bold">{item}</div>
+                      <div className="font-mono">0{8 + idx}:00</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Form Grid: Texts (Left) + Blocks & Colors (Right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 text-xs">
+          {/* Texts Editor */}
+          <div className="lg:col-span-5 p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 space-y-3">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">
+              <Type className="w-4 h-4 text-amber-400" />
+              <h4 className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
+                Teksty nagłówków i bloków
+              </h4>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">
+                Tytuł główny w nagłówku (np. nazwa szkoły)
+              </label>
+              <input
+                type="text"
+                maxLength={120}
+                value={tvDisplay.headerTitle}
+                onChange={(e) => updateTvDisplay({ headerTitle: e.target.value })}
+                placeholder="Zespół Szkół - Radiowęzeł Szkolny"
+                className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">
+                Prefiks podtytułu przed nazwą profilu
+              </label>
+              <input
+                type="text"
+                maxLength={120}
+                value={tvDisplay.headerSubtitlePrefix}
+                onChange={(e) => updateTvDisplay({ headerSubtitlePrefix: e.target.value })}
+                placeholder="Harmonogram dnia:"
+                className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Nagłówek bloku dzwonka</label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={tvDisplay.nextBellTitle}
+                  onChange={(e) => updateTvDisplay({ nextBellTitle: e.target.value })}
+                  placeholder="Następny Dzwonek"
+                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Nagłówek bloku radia</label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={tvDisplay.radioBlockTitle}
+                  onChange={(e) => updateTvDisplay({ radioBlockTitle: e.target.value })}
+                  placeholder="Radiowęzeł Szkolny"
+                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Tytuł paska lekcji na dole</label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={tvDisplay.scheduleStripTitle}
+                  onChange={(e) => updateTvDisplay({ scheduleStripTitle: e.target.value })}
+                  placeholder="Dzisiejszy Rozkład Lekcji"
+                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1">Tekst po prawej w stopce</label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={tvDisplay.footerModeText}
+                  onChange={(e) => updateTvDisplay({ footerModeText: e.target.value })}
+                  placeholder="Tryb wyświetlania: Publiczny Ekran TV"
+                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">
+                Opcjonalny pasek ogłoszeń pod nagłówkiem
+              </label>
+              <input
+                type="text"
+                maxLength={200}
+                value={tvDisplay.announcementText}
+                onChange={(e) => updateTvDisplay({ announcementText: e.target.value })}
+                placeholder="Zostaw puste, aby ukryć pasek ogłoszeń (np. Skrócone lekcje o 12:30)"
+                className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-amber-200 text-xs focus:outline-none focus:border-amber-400 placeholder:text-slate-500"
+              />
+            </div>
+          </div>
+
+          {/* Blocks Visibility & Colors */}
+          <div className="lg:col-span-7 space-y-4">
+            {/* Blocks Toggles */}
+            <div className="p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">
+                <LayoutGrid className="w-4 h-4 text-amber-400" />
+                <h4 className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
+                  Widoczność bloków na ekranie TV
+                </h4>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {TV_BLOCK_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.key}
+                    className="flex items-start gap-2.5 p-2 rounded-md bg-slate-950/60 border border-slate-800 hover:border-slate-700 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={tvDisplay[opt.key]}
+                      onChange={(e) => updateTvDisplay({ [opt.key]: e.target.checked })}
+                      className="mt-0.5 w-4 h-4 rounded bg-slate-900 border-slate-700 text-amber-500 focus:ring-0 cursor-pointer shrink-0"
+                    />
+                    <span className="leading-tight">
+                      <span className="block font-medium text-slate-200">{opt.label}</span>
+                      <span className="block text-[10px] text-slate-400 mt-0.5">{opt.hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Color Pickers */}
+            <div className="p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">
+                <Palette className="w-4 h-4 text-amber-400" />
+                <h4 className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
+                  Kolory elementów i bloków (HEX)
+                </h4>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {TV_COLOR_FIELDS.map((field) => {
+                  const pickerValue = /^#[0-9a-fA-F]{6}$/.test(tvDisplay[field.key])
+                    ? tvDisplay[field.key]
+                    : DEFAULT_TV_DISPLAY_CONFIG[field.key];
+                  return (
+                    <div
+                      key={field.key}
+                      className="p-2.5 rounded-md bg-slate-950/60 border border-slate-800 space-y-1.5"
+                    >
+                      <div className="text-[11px] font-semibold text-slate-200">{field.label}</div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          aria-label={field.label}
+                          value={pickerValue}
+                          onChange={(e) => updateTvDisplay({ [field.key]: e.target.value })}
+                          className="w-8 h-7 p-0.5 rounded bg-slate-900 border border-slate-700 cursor-pointer shrink-0"
+                        />
+                        <input
+                          type="text"
+                          maxLength={7}
+                          value={tvDisplay[field.key]}
+                          onChange={(e) => updateTvDisplay({ [field.key]: e.target.value })}
+                          className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-700 font-mono text-[11px] text-slate-200 focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                      <div className="text-[10px] text-slate-400">{field.hint}</div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>

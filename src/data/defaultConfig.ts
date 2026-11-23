@@ -1,4 +1,28 @@
-import { AppConfig, RadioStation, ScheduleProfile, SchoolHoliday } from '../types/bell';
+import { AppConfig, RadioStation, ScheduleProfile, SchoolHoliday, TvDisplayConfig } from '../types/bell';
+
+export const DEFAULT_TV_DISPLAY_CONFIG: TvDisplayConfig = {
+  headerTitle: 'Zespół Szkół - Radiowęzeł Szkolny',
+  headerSubtitlePrefix: 'Harmonogram dnia:',
+  nextBellTitle: 'Następny Dzwonek',
+  radioBlockTitle: 'Radiowęzeł Szkolny',
+  scheduleStripTitle: 'Dzisiejszy Rozkład Lekcji',
+  footerModeText: 'Tryb wyświetlania: Publiczny Ekran TV',
+  announcementText: '',
+  showHeader: true,
+  showDate: true,
+  showClockSeconds: true,
+  showProgressBar: true,
+  showNextBellBlock: true,
+  showRadioBlock: true,
+  showScheduleStrip: true,
+  backgroundColor: '#020617',
+  panelColor: '#0f172a',
+  textColor: '#f1f5f9',
+  mutedTextColor: '#94a3b8',
+  accentColor: '#fbbf24',
+  lessonColor: '#f59e0b',
+  breakColor: '#10b981',
+};
 
 export const DEFAULT_RADIO_STATIONS: RadioStation[] = [
   {
@@ -375,4 +399,5 @@ export const INITIAL_CONFIG: AppConfig = {
       powerOffTime: '15:30',
     },
   ],
+  tvDisplay: DEFAULT_TV_DISPLAY_CONFIG,
 };
