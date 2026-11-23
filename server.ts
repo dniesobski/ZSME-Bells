@@ -5096,6 +5096,20 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
               appendUpdateLog('Utworzono kopię zapasową danych i konfiguracji (data/) przed aktualizacją Git.');
             }
 
+            const lsDataRes = await runGitCommand(['ls-files', '--', 'data'], 5000);
+            if (lsDataRes.ok && lsDataRes.stdout) {
+              const trackedDataFiles = lsDataRes.stdout
+                .split(/\r?\n/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+              if (trackedDataFiles.length > 0) {
+                await runGitCommand(
+                  ['update-index', '--no-assume-unchanged', '--no-skip-worktree', '--', ...trackedDataFiles],
+                  5000
+                );
+              }
+            }
+
             const dirtyRes = await runGitCommand(['status', '--porcelain', '--untracked-files=no'], 5000);
             const dirtyLines =
               dirtyRes.ok && dirtyRes.stdout
@@ -5105,27 +5119,49 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
               appendUpdateLog(
                 `Wykryto lokalne zmiany w plikach śledzonych przez Git (${dirtyLines.length}) — resetowanie przed pobraniem (ustawienia z data/ wrócą z kopii)...`
               );
-              const resetRes = await runGitCommand(['reset', '--hard', 'HEAD'], 15000);
-              if (!resetRes.ok) {
-                throw new Error(
-                  `Nie udało się przygotować repozytorium przed aktualizacją: ${resetRes.stderr || resetRes.stdout}`
-                );
-              }
+            }
+
+            const resetRes = await runGitCommand(['reset', '--hard', 'HEAD'], 15000);
+            if (!resetRes.ok) {
+              throw new Error(
+                `Nie udało się przygotować repozytorium przed aktualizacją: ${resetRes.stderr || resetRes.stdout}`
+              );
             }
 
             appendUpdateLog(`Pobieranie zmian z Git (${check.git.commitsBehind} nowych commitów)...`);
             let pull = await runGitCommand(['pull', '--ff-only', 'origin', targetBranch], 60000);
             if (
               !pull.ok &&
-              dataBackupDir &&
-              /overwritten by merge|nadpisałoby/i.test(`${pull.stderr}\n${pull.stdout}`)
+              /overwritten by merge|nadpisałoby|would be overwritten/i.test(`${pull.stderr}\n${pull.stdout}`)
             ) {
               appendUpdateLog(
-                'Wykryto kolizję nieśledzonych plików w data/ z aktualizacją — czyszczenie kolizji (kopia zapasowa bezpieczna)...'
+                'Wykryto kolizję plików z aktualizacją Git — czyszczenie kolizji (kopia zapasowa data/ jest bezpieczna)...'
               );
-              try {
-                fs.rmSync(DATA_DIR, { recursive: true, force: true });
-              } catch {}
+              const combinedMsg = `${pull.stderr}\n${pull.stdout}`;
+              const conflictPaths = combinedMsg
+                .split(/\r?\n/)
+                .filter((line) => /^\t\S+/.test(line))
+                .map((line) => line.trim());
+              if (dataBackupDir) {
+                try {
+                  fs.rmSync(DATA_DIR, { recursive: true, force: true });
+                } catch {}
+              }
+              const cwdRoot = path.resolve(process.cwd());
+              for (const relPath of conflictPaths) {
+                if (relPath.startsWith('.git') || relPath === '.env' || relPath.includes('..')) continue;
+                const absConflict = path.resolve(cwdRoot, relPath);
+                if (absConflict.startsWith(cwdRoot + path.sep) && fs.existsSync(absConflict)) {
+                  await runGitCommand(
+                    ['update-index', '--no-assume-unchanged', '--no-skip-worktree', '--', relPath],
+                    4000
+                  );
+                  try {
+                    fs.rmSync(absConflict, { recursive: true, force: true });
+                  } catch {}
+                }
+              }
+              await runGitCommand(['reset', '--hard', 'HEAD'], 15000);
               pull = await runGitCommand(['pull', '--ff-only', 'origin', targetBranch], 60000);
             }
 
