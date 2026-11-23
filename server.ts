@@ -3986,6 +3986,87 @@ app.post(
   }
 );
 
+// 7d. Manual assignment / replacement of a drawn bell for a specific week and day (Protected)
+app.post(
+  '/api/sounds/randomizer/assign',
+  requireAnyPermission(['sounds_manage', 'schedules_edit']),
+  (req: Request, res: Response) => {
+    try {
+      const weekKey =
+        typeof req.body?.weekKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.body.weekKey.trim())
+          ? req.body.weekKey.trim()
+          : '';
+      const dayOfWeek = req.body?.dayOfWeek;
+      const soundId =
+        typeof req.body?.soundId === 'string' ? req.body.soundId.trim() : '';
+
+      if (!weekKey) {
+        return res.status(400).json({ success: false, error: 'Nieprawidłowy klucz tygodnia (YYYY-MM-DD).' });
+      }
+      if (
+        typeof dayOfWeek !== 'number' ||
+        !Number.isInteger(dayOfWeek) ||
+        dayOfWeek < 0 ||
+        dayOfWeek > 6
+      ) {
+        return res.status(400).json({ success: false, error: 'Nieprawidłowy dzień tygodnia (0-6).' });
+      }
+      if (!soundId || !soundExistsById(soundId)) {
+        return res.status(400).json({ success: false, error: 'Wybrana melodia nie istnieje w bazie kontrolera.' });
+      }
+
+      const randCfg = getBellRandomizerConfig();
+      const prevMap = { ...(randCfg.weekAssignments[weekKey] || {}) };
+      const oldSoundId = prevMap[dayOfWeek];
+      prevMap[dayOfWeek] = soundId;
+
+      const now = new Date();
+      const currentWeekKey = getWeekMondayDateStr(now);
+      const noRepeatWeeks = getNoRepeatWeeks(randCfg);
+
+      randCfg.weekAssignments = pruneOldWeekAssignments(
+        {
+          ...randCfg.weekAssignments,
+          [weekKey]: prevMap,
+        },
+        currentWeekKey,
+        noRepeatWeeks
+      );
+      config.bellRandomizer = randCfg;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      const newSoundName = findSoundNameById(soundId);
+      const oldSoundName = oldSoundId ? findSoundNameById(oldSoundId) : 'brak';
+
+      history.unshift({
+        id: `assign_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: now.toISOString(),
+        timeStr: `${hh}:${mm}:${ss}`,
+        bellType: 'bell_draw',
+        title: `Ręczna podmiana dzwonka: ${RANDOMIZER_DAY_NAMES[dayOfWeek] || dayOfWeek} (${weekKey})`,
+        soundName: newSoundName,
+        status: 'simulated',
+        details: `${oldSoundName} → ${newSoundName}`,
+      });
+      saveHistory();
+
+      res.json({
+        success: true,
+        weekKey,
+        dayOfWeek,
+        soundId,
+        soundName: newSoundName,
+        bellRandomizer: randCfg,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || 'Błąd podmiany melodii.' });
+    }
+  }
+);
+
 // 8. History log (Protected)
 app.get('/api/history', requireAnyPermission(['logs_view', 'dashboard_view']), (_req: Request, res: Response) => {
   res.json(history);

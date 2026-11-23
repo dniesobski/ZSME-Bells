@@ -524,6 +524,45 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
     }
   };
 
+  const handleManualAssignDaySound = async (
+    weekKey: string,
+    dayOfWeek: number,
+    soundId: string
+  ) => {
+    if (!soundId) return;
+    setIsDrawingRand(true);
+    setRandMsg(null);
+    try {
+      const res = await apiFetch('/api/sounds/randomizer/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekKey, dayOfWeek, soundId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error || 'Nie udało się podmienić melodii.');
+      }
+      if (data.bellRandomizer) {
+        setRandomizer(data.bellRandomizer);
+      }
+      await onRefreshSounds();
+      const dayLabel = WEEK_DAYS_ORDERED.find((d) => d.key === dayOfWeek)?.name || '';
+      setRandMsg({
+        type: 'success',
+        text: `Podmieniono melodię dla ${dayLabel} (${weekKey}) na: ${
+          data.soundName || soundById.get(soundId)?.name || soundId
+        }.`,
+      });
+    } catch (err: any) {
+      setRandMsg({
+        type: 'error',
+        text: err?.message || 'Nie udało się podmienić melodii.',
+      });
+    } finally {
+      setIsDrawingRand(false);
+    }
+  };
+
   const currentWeekKey = getCurrentMondayStr();
   const nextWeekKey = getNextMondayStr();
   const currentWeekMap = randomizer.weekAssignments[currentWeekKey] || {};
@@ -1252,7 +1291,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
               {sortedActiveDays.map((dayKey) => {
                 const dayMeta = WEEK_DAYS_ORDERED.find((d) => d.key === dayKey)!;
-                const assignedId = currentWeekMap[dayKey];
+                const assignedId = currentWeekMap[dayKey] || '';
                 const assignedSound = assignedId ? soundById.get(assignedId) : undefined;
                 const isToday = dayKey === todayJsDay;
                 const isPlayingThis = assignedSound && activePlayingId === assignedSound.id;
@@ -1260,14 +1299,14 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
                 return (
                   <div
                     key={dayKey}
-                    className={`p-3 rounded-lg border flex items-center justify-between gap-2 ${
+                    className={`p-3 rounded-lg border space-y-2 ${
                       isToday
                         ? 'bg-amber-500/10 border-amber-500/60'
                         : 'bg-slate-950/70 border-slate-800'
                     }`}
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         <span className="font-bold text-white">{dayMeta.name}</span>
                         {isToday && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[9px] font-extrabold uppercase">
@@ -1275,40 +1314,70 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] text-amber-300 truncate mt-0.5">
-                        {assignedSound ? assignedSound.name : 'Nie wylosowano jeszcze'}
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {assignedSound && (
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePlay(assignedSound)}
+                            title="Odsłuchaj"
+                            className={`p-1.5 rounded-md cursor-pointer ${
+                              isPlayingThis
+                                ? 'bg-rose-500 text-white'
+                                : 'bg-slate-800 hover:bg-slate-700 text-amber-300'
+                            }`}
+                          >
+                            {isPlayingThis ? (
+                              <Square className="w-3 h-3" />
+                            ) : (
+                              <Play className="w-3 h-3 fill-current" />
+                            )}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isDrawingRand}
+                          onClick={() => handleDrawRandomBells('current', dayKey, currentWeekKey)}
+                          title={`Przelosuj dzwonek tylko dla: ${dayMeta.name}`}
+                          className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer disabled:opacity-40"
+                        >
+                          <Shuffle className="w-3 h-3" />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      {assignedSound && (
-                        <button
-                          type="button"
-                          onClick={() => handleTogglePlay(assignedSound)}
-                          title="Odsłuchaj"
-                          className={`p-1.5 rounded-md cursor-pointer ${
-                            isPlayingThis
-                              ? 'bg-rose-500 text-white'
-                              : 'bg-slate-800 hover:bg-slate-700 text-amber-300'
-                          }`}
-                        >
-                          {isPlayingThis ? (
-                            <Square className="w-3 h-3" />
-                          ) : (
-                            <Play className="w-3 h-3 fill-current" />
-                          )}
-                        </button>
+                    <select
+                      aria-label={`Melodia dla ${dayMeta.name} (${currentWeekKey})`}
+                      disabled={isDrawingRand}
+                      value={assignedSound ? assignedSound.id : ''}
+                      onChange={(e) =>
+                        handleManualAssignDaySound(currentWeekKey, dayKey, e.target.value)
+                      }
+                      title="Kliknij, aby ręcznie podmienić wylosowaną melodię na inną"
+                      className="w-full px-2 py-1.5 rounded bg-slate-900 border border-slate-700/80 text-[11px] text-amber-300 focus:outline-none focus:border-amber-400 cursor-pointer disabled:opacity-50"
+                    >
+                      {!assignedSound && (
+                        <option value="" disabled>
+                          — Wybierz lub wylosuj melodię —
+                        </option>
                       )}
-                      <button
-                        type="button"
-                        disabled={isDrawingRand}
-                        onClick={() => handleDrawRandomBells('current', dayKey, currentWeekKey)}
-                        title={`Przelosuj dzwonek tylko dla: ${dayMeta.name}`}
-                        className="p-1.5 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer disabled:opacity-40"
-                      >
-                        <Shuffle className="w-3 h-3" />
-                      </button>
-                    </div>
+                      {custom.length > 0 && (
+                        <optgroup label="Własne i z katalogu WWW">
+                          {custom.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      <optgroup label="Wbudowane melodie">
+                        {presets.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
                   </div>
                 );
               })}
@@ -1325,7 +1394,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-400">
-                  Okno bez powtórzeń: {noRepeatWeeksValue} tyg.
+                  Okno bez powtórzeń: {noRepeatWeeksValue} tyg. · Możesz ręcznie podmienić dowolny dzień
                 </span>
               </div>
 
@@ -1353,52 +1422,82 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-[11px]">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-[11px]">
                         {sortedActiveDays.map((dayKey) => {
                           const dayMeta = WEEK_DAYS_ORDERED.find((d) => d.key === dayKey)!;
-                          const assignedId = wkMap[dayKey];
+                          const assignedId = wkMap[dayKey] || '';
                           const assignedSound = assignedId ? soundById.get(assignedId) : undefined;
                           const isPlayingThis = assignedSound && activePlayingId === assignedSound.id;
                           return (
                             <div
                               key={dayKey}
-                              className="p-2 rounded bg-slate-900/70 border border-slate-800/80 flex items-center justify-between gap-1"
+                              className="p-2 rounded bg-slate-900/70 border border-slate-800/80 space-y-1.5"
                             >
-                              <div className="min-w-0">
-                                <div className="font-semibold text-slate-300">{dayMeta.short}</div>
-                                <div className="text-sky-300 truncate mt-0.5" title={assignedSound?.name}>
-                                  {assignedSound ? assignedSound.name : '—'}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-0.5 shrink-0">
-                                {assignedSound && (
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-semibold text-slate-300">{dayMeta.name}</span>
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  {assignedSound && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTogglePlay(assignedSound)}
+                                      title="Odsłuchaj"
+                                      className={`p-1 rounded cursor-pointer ${
+                                        isPlayingThis
+                                          ? 'bg-rose-500 text-white'
+                                          : 'text-slate-400 hover:text-amber-300'
+                                      }`}
+                                    >
+                                      {isPlayingThis ? (
+                                        <Square className="w-2.5 h-2.5" />
+                                      ) : (
+                                        <Play className="w-2.5 h-2.5 fill-current" />
+                                      )}
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
-                                    onClick={() => handleTogglePlay(assignedSound)}
-                                    title="Odsłuchaj"
-                                    className={`p-1 rounded cursor-pointer ${
-                                      isPlayingThis
-                                        ? 'bg-rose-500 text-white'
-                                        : 'text-slate-400 hover:text-amber-300'
-                                    }`}
+                                    disabled={isDrawingRand}
+                                    onClick={() => handleDrawRandomBells('next', dayKey, wk)}
+                                    title={`Przelosuj ${dayMeta.name} (${wk})`}
+                                    className="p-1 rounded text-slate-400 hover:text-white cursor-pointer disabled:opacity-40"
                                   >
-                                    {isPlayingThis ? (
-                                      <Square className="w-2.5 h-2.5" />
-                                    ) : (
-                                      <Play className="w-2.5 h-2.5 fill-current" />
-                                    )}
+                                    <Shuffle className="w-2.5 h-2.5" />
                                   </button>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={isDrawingRand}
-                                  onClick={() => handleDrawRandomBells('next', dayKey, wk)}
-                                  title={`Przelosuj ${dayMeta.name} (${wk})`}
-                                  className="p-1 rounded text-slate-400 hover:text-white cursor-pointer disabled:opacity-40"
-                                >
-                                  <Shuffle className="w-2.5 h-2.5" />
-                                </button>
+                                </div>
                               </div>
+
+                              <select
+                                aria-label={`Melodia dla ${dayMeta.name} (${wk})`}
+                                disabled={isDrawingRand}
+                                value={assignedSound ? assignedSound.id : ''}
+                                onChange={(e) =>
+                                  handleManualAssignDaySound(wk, dayKey, e.target.value)
+                                }
+                                title="Kliknij, aby ręcznie podmienić wylosowaną melodię na inną"
+                                className="w-full px-2 py-1 rounded bg-slate-950 border border-slate-800 text-[11px] text-sky-300 focus:outline-none focus:border-sky-400 cursor-pointer disabled:opacity-50"
+                              >
+                                {!assignedSound && (
+                                  <option value="" disabled>
+                                    — Wybierz melodię —
+                                  </option>
+                                )}
+                                {custom.length > 0 && (
+                                  <optgroup label="Własne i z katalogu WWW">
+                                    {custom.map((s) => (
+                                      <option key={s.id} value={s.id}>
+                                        {s.name}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                <optgroup label="Wbudowane melodie">
+                                  {presets.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                      {s.name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              </select>
                             </div>
                           );
                         })}
