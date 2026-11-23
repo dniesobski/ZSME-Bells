@@ -4536,7 +4536,8 @@ function getFileSha256IfExists(relPath: string): string | null {
 function runCommandFile(
   file: string,
   args: string[],
-  timeoutMs: number = 30000
+  timeoutMs: number = 30000,
+  envOverrides?: Record<string, string>
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     execFile(
@@ -4546,7 +4547,7 @@ function runCommandFile(
         cwd: process.cwd(),
         timeout: timeoutMs,
         maxBuffer: 2 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...(envOverrides || {}) },
       },
       (error, stdout, stderr) => {
         resolve({
@@ -4899,16 +4900,21 @@ async function inspectGitUpdateStatus(savedConfig: DebianGitConfig | null): Prom
   return gitInfo;
 }
 
-function parseAptUpgradableLines(stdout: string): string[] {
-  return stdout
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => {
-      if (!l) return false;
-      if (/^(listing|wypisywanie|wyświetlanie|warning|uwaga)\b/i.test(l)) return false;
-      // Real `apt list --upgradable` entries follow: "<pkg>/<suite> <version> <arch> [upgradable from: ...]"
-      return /^[a-z0-9][a-z0-9+.:_-]*\/[^\s]+\s+\S+/i.test(l);
-    });
+function parseAptSimulateUpgradePackages(stdout: string): string[] {
+  const packages: string[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const match = /^Inst\s+([^\s:]+)(?::[^\s]+)?\s+/i.exec(line);
+    if (match && match[1]) {
+      const pkg = match[1];
+      if (!seen.has(pkg)) {
+        seen.add(pkg);
+        packages.push(pkg);
+      }
+    }
+  }
+  return packages;
 }
 
 async function performDebianUpdateCheck(options?: { checkApt?: boolean }): Promise<DebianUpdateCheckResult> {
@@ -4940,17 +4946,20 @@ async function performDebianUpdateCheck(options?: { checkApt?: boolean }): Promi
     if (aptPriv.available) {
       aptInfo.available = true;
       if (aptPriv.isRoot) {
-        await runCommandFile('apt-get', ['update', '-qq'], 25000);
+        await runCommandFile('apt-get', ['update', '-qq'], 25000, { LC_ALL: 'C', LANG: 'C' });
       }
-      const listRes = await runCommandFile('apt', ['list', '--upgradable'], 10000);
-      if (listRes.ok) {
-        const lines = parseAptUpgradableLines(listRes.stdout);
-        aptInfo.upgradableCount = lines.length;
-        aptInfo.upgradablePackages = lines.slice(0, 15).map((l) => l.split('/')[0]);
+      const simRes = await runCommandFile('apt-get', ['-s', '-q', 'upgrade'], 15000, {
+        LC_ALL: 'C',
+        LANG: 'C',
+      });
+      if (simRes.ok) {
+        const packages = parseAptSimulateUpgradePackages(simRes.stdout);
+        aptInfo.upgradableCount = packages.length;
+        aptInfo.upgradablePackages = packages.slice(0, 15);
         aptInfo.note = !aptPriv.isRoot
-          ? `Wykryto ${lines.length} pakietów (odczyt bez uprawnień root — odświeżenie list wymaga uruchomienia usługi jako root).`
-          : lines.length > 0
-          ? `Dostępne aktualizacje pakietów Debian (${lines.length}).`
+          ? `Wykryto ${packages.length} pakietów (odczyt bez uprawnień root — odświeżenie list wymaga uruchomienia usługi jako root).`
+          : packages.length > 0
+          ? `Dostępne aktualizacje pakietów Debian (${packages.length}).`
           : 'Wszystkie pakiety systemu Debian 13 są aktualne.';
       } else {
         aptInfo.note = !aptPriv.isRoot
@@ -4980,6 +4989,33 @@ function appendUpdateLog(msg: string) {
   if (debianUpdateJob.logs.length > 150) {
     debianUpdateJob.logs = debianUpdateJob.logs.slice(-150);
   }
+}
+
+function backupUserDataDirectory(): string | null {
+  if (!fs.existsSync(DATA_DIR)) return null;
+  const backupDir = path.join(
+    os.tmpdir(),
+    `harmoniabell-data-backup-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+  );
+  fs.cpSync(DATA_DIR, backupDir, { recursive: true });
+  return backupDir;
+}
+
+function restoreUserDataDirectory(backupDir: string | null): number {
+  if (!backupDir || !fs.existsSync(backupDir)) return 0;
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  fs.cpSync(backupDir, DATA_DIR, { recursive: true, force: true });
+  const countFiles = (dir: string): number => {
+    let total = 0;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) total += countFiles(path.join(dir, entry.name));
+      else total++;
+    }
+    return total;
+  };
+  return countFiles(backupDir);
 }
 
 async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
@@ -5022,28 +5058,91 @@ async function startDebianUpdateJob(target: 'all' | 'app' | 'system') {
 
         if (!headExistsRes.ok) {
           ensureDataExcludedFromGit();
-          appendUpdateLog(`Pierwsza synchronizacja aplikacji z gałęzi ${targetBranch}...`);
-          const fetchRes = await runGitCommand(['fetch', 'origin', targetBranch], 60000);
-          if (!fetchRes.ok) {
-            throw new Error(`Błąd pobierania repozytorium: ${fetchRes.stderr || fetchRes.stdout}`);
+          let dataBackupDir: string | null = null;
+          try {
+            dataBackupDir = backupUserDataDirectory();
+            if (dataBackupDir) {
+              appendUpdateLog('Utworzono kopię zapasową konfiguracji i dźwięków (data/) przed synchronizacją.');
+            }
+            appendUpdateLog(`Pierwsza synchronizacja aplikacji z gałęzi ${targetBranch}...`);
+            const fetchRes = await runGitCommand(['fetch', 'origin', targetBranch], 60000);
+            if (!fetchRes.ok) {
+              throw new Error(`Błąd pobierania repozytorium: ${fetchRes.stderr || fetchRes.stdout}`);
+            }
+            const checkoutRes = await runGitCommand(
+              ['checkout', '-f', '-B', targetBranch, `origin/${targetBranch}`],
+              60000
+            );
+            appendUpdateLog(checkoutRes.stdout || checkoutRes.stderr || 'Pobrano pliki aplikacji.');
+            if (!checkoutRes.ok) {
+              throw new Error(`Błąd synchronizacji gałęzi: ${checkoutRes.stderr || checkoutRes.stdout}`);
+            }
+            appFilesChanged = true;
+          } finally {
+            if (dataBackupDir) {
+              const restoredCount = restoreUserDataDirectory(dataBackupDir);
+              appendUpdateLog(`Przywrócono dane i konfigurację użytkownika z kopii zapasowej (${restoredCount} plików).`);
+              try {
+                fs.rmSync(dataBackupDir, { recursive: true, force: true });
+              } catch {}
+            }
           }
-          const checkoutRes = await runGitCommand(
-            ['checkout', '-f', '-B', targetBranch, `origin/${targetBranch}`],
-            60000
-          );
-          appendUpdateLog(checkoutRes.stdout || checkoutRes.stderr || 'Pobrano pliki aplikacji.');
-          if (!checkoutRes.ok) {
-            throw new Error(`Błąd synchronizacji gałęzi: ${checkoutRes.stderr || checkoutRes.stdout}`);
-          }
-          appFilesChanged = true;
         } else if (check.git.updateAvailable) {
-          appendUpdateLog(`Pobieranie zmian z Git (${check.git.commitsBehind} nowych commitów)...`);
-          const pull = await runGitCommand(['pull', '--ff-only', 'origin', targetBranch], 60000);
-          appendUpdateLog(pull.stdout || pull.stderr || 'git pull zakończony.');
-          if (!pull.ok) {
-            throw new Error(`Błąd git pull: ${pull.stderr || pull.stdout}`);
+          ensureDataExcludedFromGit();
+          let dataBackupDir: string | null = null;
+          try {
+            dataBackupDir = backupUserDataDirectory();
+            if (dataBackupDir) {
+              appendUpdateLog('Utworzono kopię zapasową danych i konfiguracji (data/) przed aktualizacją Git.');
+            }
+
+            const dirtyRes = await runGitCommand(['status', '--porcelain', '--untracked-files=no'], 5000);
+            const dirtyLines =
+              dirtyRes.ok && dirtyRes.stdout
+                ? dirtyRes.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+                : [];
+            if (dirtyLines.length > 0) {
+              appendUpdateLog(
+                `Wykryto lokalne zmiany w plikach śledzonych przez Git (${dirtyLines.length}) — resetowanie przed pobraniem (ustawienia z data/ wrócą z kopii)...`
+              );
+              const resetRes = await runGitCommand(['reset', '--hard', 'HEAD'], 15000);
+              if (!resetRes.ok) {
+                throw new Error(
+                  `Nie udało się przygotować repozytorium przed aktualizacją: ${resetRes.stderr || resetRes.stdout}`
+                );
+              }
+            }
+
+            appendUpdateLog(`Pobieranie zmian z Git (${check.git.commitsBehind} nowych commitów)...`);
+            let pull = await runGitCommand(['pull', '--ff-only', 'origin', targetBranch], 60000);
+            if (
+              !pull.ok &&
+              dataBackupDir &&
+              /overwritten by merge|nadpisałoby/i.test(`${pull.stderr}\n${pull.stdout}`)
+            ) {
+              appendUpdateLog(
+                'Wykryto kolizję nieśledzonych plików w data/ z aktualizacją — czyszczenie kolizji (kopia zapasowa bezpieczna)...'
+              );
+              try {
+                fs.rmSync(DATA_DIR, { recursive: true, force: true });
+              } catch {}
+              pull = await runGitCommand(['pull', '--ff-only', 'origin', targetBranch], 60000);
+            }
+
+            appendUpdateLog(pull.stdout || pull.stderr || 'git pull zakończony.');
+            if (!pull.ok) {
+              throw new Error(`Błąd git pull: ${pull.stderr || pull.stdout}`);
+            }
+            appFilesChanged = true;
+          } finally {
+            if (dataBackupDir) {
+              const restoredCount = restoreUserDataDirectory(dataBackupDir);
+              appendUpdateLog(`Przywrócono dane i konfigurację użytkownika z kopii zapasowej (${restoredCount} plików).`);
+              try {
+                fs.rmSync(dataBackupDir, { recursive: true, force: true });
+              } catch {}
+            }
           }
-          appFilesChanged = true;
         } else {
           appendUpdateLog('Kod aplikacji jest już w najnowszej wersji.');
         }
