@@ -4707,10 +4707,18 @@ function ensureDataExcludedFromGit() {
     }
     const excludeFile = path.resolve(infoDir, 'exclude');
     const existing = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf-8') : '';
-    const lines = existing.split('\n').map((l) => l.trim());
-    if (!lines.includes('data/') && !lines.includes('/data/')) {
+    const rawLines = existing.split(/\r?\n/);
+    const hasBareData = rawLines.some((l) => l.trim() === 'data/');
+    const hasRootData = rawLines.some((l) => l.trim() === '/data/');
+    if (hasBareData) {
+      const updated = rawLines
+        .map((l) => (l.trim() === 'data/' ? '/data/' : l))
+        .filter((l, idx, arr) => !(l.trim() === '/data/' && arr.findIndex((x) => x.trim() === '/data/') !== idx))
+        .join('\n');
+      fs.writeFileSync(excludeFile, updated.endsWith('\n') ? updated : `${updated}\n`, 'utf-8');
+    } else if (!hasRootData) {
       const prefix = existing && !existing.endsWith('\n') ? '\n' : '';
-      fs.appendFileSync(excludeFile, `${prefix}data/\n`, 'utf-8');
+      fs.appendFileSync(excludeFile, `${prefix}/data/\n`, 'utf-8');
     }
   } catch {}
 }
