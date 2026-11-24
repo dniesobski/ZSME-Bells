@@ -298,7 +298,22 @@ export type PermissionKey =
   | 'volume_edit'
   | 'logs_view'
   | 'debian_view'
+  | 'terminal_access'
   | 'users_manage';
+
+export interface TerminalStatusInfo {
+  isRootProcess: boolean;
+  shadowReadable: boolean;
+  rootHasPassword: boolean;
+  shadowReason: 'ok' | 'unreadable' | 'no_password_set' | 'no_shadow_file';
+  unlocked: boolean;
+  expiresAt: number | null;
+  cwd: string;
+  hostname: string;
+  osName: string;
+  activeUser: string;
+  activeJobId: string | null;
+}
 
 export interface PermissionGroup {
   id: string;

@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
-import { ChildProcess, exec, execFile, execSync, spawn } from 'child_process';
+import { ChildProcess, exec, execFile, execFileSync, execSync, spawn } from 'child_process';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import {
@@ -35,6 +35,7 @@ import {
   SoundTrack,
   SystemMetricsPoint,
   SystemStatus,
+  TerminalStatusInfo,
   TvDisplayConfig,
   TvPublicData,
   UserAccountPublic,
@@ -188,6 +189,7 @@ interface AuthStore {
   sessionSecret: string;
   groups: PermissionGroup[];
   users: UserAccountRecord[];
+  migratedTerminalPerm?: boolean;
 }
 
 interface AuthenticatedContext {
@@ -274,7 +276,21 @@ if (fs.existsSync(AUTH_FILE)) {
         sessionSecret: raw.sessionSecret || crypto.randomBytes(32).toString('hex'),
         groups: raw.groups.length > 0 ? raw.groups : createDefaultGroups(),
         users: raw.users,
+        migratedTerminalPerm: Boolean(raw.migratedTerminalPerm),
       };
+      if (!authStore.migratedTerminalPerm) {
+        const adminGrp = authStore.groups.find((g) => g.id === 'grp_admin');
+        if (
+          adminGrp &&
+          adminGrp.permissions.includes('debian_view') &&
+          adminGrp.permissions.includes('users_manage') &&
+          !adminGrp.permissions.includes('terminal_access')
+        ) {
+          adminGrp.permissions.push('terminal_access');
+        }
+        authStore.migratedTerminalPerm = true;
+        fs.writeFileSync(AUTH_FILE, JSON.stringify(authStore, null, 2));
+      }
     } else {
       // Migrate legacy single-admin auth.json seamlessly
       authStore = {
@@ -5491,6 +5507,666 @@ app.post('/api/debian/run-update', requireAnyPermission(['debian_view']), (req: 
     job: debianUpdateJob,
   });
 });
+
+/* ===================== WEB ROOT TERMINAL (/etc/shadow LOCKED) ===================== */
+const SHADOW_FILE_PATH = '/etc/shadow';
+const TERMINAL_TOKEN_TTL_MS = 15 * 60 * 1000;
+const TERMINAL_JOB_TIMEOUT_MS = 10 * 60 * 1000;
+const TERMINAL_MAX_OUTPUT_CHARS = 512 * 1024;
+const TERMINAL_UNLOCK_MAX_FAILURES = 5;
+const TERMINAL_UNLOCK_LOCKOUT_MS = 60 * 1000;
+
+interface TerminalSessionState {
+  sid: string;
+  userId: string;
+  cwd: string;
+  activeJobId: string | null;
+  lastActivityAt: number;
+}
+
+interface TerminalJobRecord {
+  id: string;
+  sid: string;
+  userId: string;
+  command: string;
+  cwdBefore: string;
+  cwdAfter: string;
+  startedAt: number;
+  finishedAt: number | null;
+  done: boolean;
+  exitCode: number | null;
+  signal: string | null;
+  output: string;
+  truncated: boolean;
+  child: ChildProcess | null;
+  timeoutHandle: NodeJS.Timeout | null;
+  cwdFile: string;
+}
+
+interface TerminalRequest extends AuthenticatedRequest {
+  terminalSession?: TerminalSessionState;
+  terminalExpiresAt?: number;
+}
+
+const terminalSessions = new Map<string, TerminalSessionState>();
+const terminalJobs = new Map<string, TerminalJobRecord>();
+const terminalUnlockFailures = new Map<string, { failures: number; lockedUntil: number }>();
+
+function getTerminalSigningKey(): Buffer {
+  return crypto
+    .createHmac('sha256', authStore.sessionSecret)
+    .update('harmoniabell:terminal_root_v1')
+    .digest();
+}
+
+function inspectRootShadowStatus(): {
+  isRootProcess: boolean;
+  shadowReadable: boolean;
+  rootHasPassword: boolean;
+  shadowReason: TerminalStatusInfo['shadowReason'];
+  hash: string | null;
+} {
+  const isRootProcess = typeof process.getuid === 'function' ? process.getuid() === 0 : false;
+  if (!fs.existsSync(SHADOW_FILE_PATH)) {
+    return {
+      isRootProcess,
+      shadowReadable: false,
+      rootHasPassword: false,
+      shadowReason: 'no_shadow_file',
+      hash: null,
+    };
+  }
+  let content = '';
+  try {
+    content = fs.readFileSync(SHADOW_FILE_PATH, 'utf-8');
+  } catch {
+    return {
+      isRootProcess,
+      shadowReadable: false,
+      rootHasPassword: false,
+      shadowReason: 'unreadable',
+      hash: null,
+    };
+  }
+  const rootLine = content
+    .split(/\r?\n/)
+    .find((line) => line.startsWith('root:'));
+  if (!rootLine) {
+    return {
+      isRootProcess,
+      shadowReadable: true,
+      rootHasPassword: false,
+      shadowReason: 'no_password_set',
+      hash: null,
+    };
+  }
+  const fields = rootLine.split(':');
+  const hash = (fields[1] || '').trim();
+  if (!hash || hash === '*' || hash === 'x' || hash.startsWith('!')) {
+    return {
+      isRootProcess,
+      shadowReadable: true,
+      rootHasPassword: false,
+      shadowReason: 'no_password_set',
+      hash: null,
+    };
+  }
+  return {
+    isRootProcess,
+    shadowReadable: true,
+    rootHasPassword: true,
+    shadowReason: 'ok',
+    hash,
+  };
+}
+
+const PY_VERIFY_SHADOW_CRYPT = [
+  'import ctypes, ctypes.util, hmac, json, sys',
+  'data = json.loads(sys.stdin.read())',
+  'pw = data.get("password", "")',
+  'stored = data.get("hash", "")',
+  'if not pw or not stored:',
+  '    sys.stdout.write("0")',
+  '    sys.exit(0)',
+  'lib = None',
+  'for candidate in [ctypes.util.find_library("crypt"), "libcrypt.so.1", "libcrypt.so.2", "libc.so.6"]:',
+  '    if not candidate:',
+  '        continue',
+  '    try:',
+  '        loaded = ctypes.CDLL(candidate)',
+  '        if hasattr(loaded, "crypt"):',
+  '            lib = loaded',
+  '            break',
+  '    except OSError:',
+  '        pass',
+  'if lib is None:',
+  '    sys.exit(2)',
+  'lib.crypt.argtypes = [ctypes.c_char_p, ctypes.c_char_p]',
+  'lib.crypt.restype = ctypes.c_char_p',
+  'computed = lib.crypt(pw.encode("utf-8"), stored.encode("utf-8"))',
+  'if not computed:',
+  '    sys.stdout.write("0")',
+  '    sys.exit(0)',
+  'ok = hmac.compare_digest(computed, stored.encode("utf-8"))',
+  'sys.stdout.write("1" if ok else "0")',
+].join('\n');
+
+function verifyShadowPasswordHash(password: string, storedHash: string): boolean {
+  if (!password || !storedHash || storedHash === '*' || storedHash.startsWith('!')) {
+    return false;
+  }
+  try {
+    const out = execFileSync('python3', ['-c', PY_VERIFY_SHADOW_CRYPT], {
+      input: JSON.stringify({ password, hash: storedHash }),
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    return out === '1';
+  } catch {
+    return false;
+  }
+}
+
+function createTerminalToken(ctx: AuthenticatedContext, sid: string): { token: string; expiresAt: number } {
+  const expiresAt = Date.now() + TERMINAL_TOKEN_TTL_MS;
+  const payload = {
+    uid: ctx.user.id,
+    v: ctx.user.tokenVersion,
+    sid,
+    exp: expiresAt,
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getTerminalSigningKey())
+    .update(payloadB64)
+    .digest('base64url');
+  return {
+    token: `${payloadB64}.${sig}`,
+    expiresAt,
+  };
+}
+
+function verifyTerminalToken(
+  token: string | undefined,
+  ctx: AuthenticatedContext
+): { sid: string; expiresAt: number } | null {
+  if (!token || !token.includes('.')) return null;
+  const [payloadB64, sig] = token.split('.');
+  if (!payloadB64 || !sig) return null;
+
+  const expectedSig = crypto
+    .createHmac('sha256', getTerminalSigningKey())
+    .update(payloadB64)
+    .digest('base64url');
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
+    if (
+      typeof payload.sid !== 'string' ||
+      typeof payload.exp !== 'number' ||
+      payload.exp < Date.now() ||
+      payload.uid !== ctx.user.id ||
+      payload.v !== ctx.user.tokenVersion
+    ) {
+      return null;
+    }
+    return { sid: payload.sid, expiresAt: payload.exp };
+  } catch {
+    return null;
+  }
+}
+
+function getOrCreateTerminalSession(sid: string, userId: string): TerminalSessionState {
+  let sess = terminalSessions.get(sid);
+  if (!sess || sess.userId !== userId) {
+    sess = {
+      sid,
+      userId,
+      cwd: process.cwd(),
+      activeJobId: null,
+      lastActivityAt: Date.now(),
+    };
+    terminalSessions.set(sid, sess);
+  }
+  sess.lastActivityAt = Date.now();
+  return sess;
+}
+
+function pruneExpiredTerminalState() {
+  const now = Date.now();
+  for (const [id, job] of terminalJobs.entries()) {
+    if (job.done && job.finishedAt && now - job.finishedAt > 15 * 60 * 1000) {
+      terminalJobs.delete(id);
+    }
+  }
+  for (const [sid, sess] of terminalSessions.entries()) {
+    if (!sess.activeJobId && now - sess.lastActivityAt > 60 * 60 * 1000) {
+      terminalSessions.delete(sid);
+    }
+  }
+}
+
+function requireTerminalUnlocked(req: TerminalRequest, res: Response, next: NextFunction) {
+  const ctx = req.auth;
+  if (!ctx) {
+    return res.status(401).json({ success: false, error: 'Wymagane zalogowanie.' });
+  }
+  const rawHeader = req.headers['x-terminal-token'];
+  const token = typeof rawHeader === 'string' ? rawHeader.trim() : undefined;
+  const verified = verifyTerminalToken(token, ctx);
+  if (!verified) {
+    return res.status(403).json({
+      success: false,
+      locked: true,
+      error: 'Terminal jest zablokowany lub sesja wygasła. Podaj hasło root z /etc/shadow.',
+    });
+  }
+  req.terminalSession = getOrCreateTerminalSession(verified.sid, ctx.user.id);
+  req.terminalExpiresAt = verified.expiresAt;
+  next();
+}
+
+function stripAnsiEscapeCodes(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, '')
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1B[@-Z\\-_]/g, '');
+}
+
+function resolveActiveOsUserLabel(): string {
+  try {
+    return os.userInfo().username || (typeof process.getuid === 'function' && process.getuid() === 0 ? 'root' : 'node');
+  } catch {
+    return typeof process.getuid === 'function' && process.getuid() === 0 ? 'root' : 'node';
+  }
+}
+
+function serializeTerminalJob(job: TerminalJobRecord, offset: number = 0) {
+  const safeOffset = Math.max(0, Math.min(offset, job.output.length));
+  return {
+    id: job.id,
+    command: job.command,
+    cwdBefore: job.cwdBefore,
+    cwdAfter: job.cwdAfter,
+    done: job.done,
+    exitCode: job.exitCode,
+    signal: job.signal,
+    outputDelta: job.output.slice(safeOffset),
+    nextOffset: job.output.length,
+    truncated: job.truncated,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+  };
+}
+
+app.get('/api/terminal/status', requireAnyPermission(['terminal_access']), (req: TerminalRequest, res: Response) => {
+  pruneExpiredTerminalState();
+  const ctx = req.auth!;
+  const shadow = inspectRootShadowStatus();
+  const rawHeader = req.headers['x-terminal-token'];
+  const token = typeof rawHeader === 'string' ? rawHeader.trim() : undefined;
+  const verified = verifyTerminalToken(token, ctx);
+  const sess = verified ? getOrCreateTerminalSession(verified.sid, ctx.user.id) : null;
+
+  const info: TerminalStatusInfo = {
+    isRootProcess: shadow.isRootProcess,
+    shadowReadable: shadow.shadowReadable,
+    rootHasPassword: shadow.rootHasPassword,
+    shadowReason: shadow.shadowReason,
+    unlocked: Boolean(verified),
+    expiresAt: verified ? verified.expiresAt : null,
+    cwd: sess ? sess.cwd : process.cwd(),
+    hostname: os.hostname(),
+    osName: getDebianOsName(),
+    activeUser: resolveActiveOsUserLabel(),
+    activeJobId: sess?.activeJobId || null,
+  };
+  res.json(info);
+});
+
+app.post('/api/terminal/unlock', requireAnyPermission(['terminal_access']), (req: AuthenticatedRequest, res: Response) => {
+  const ctx = req.auth!;
+  const attemptKey = `${ctx.user.id}:${req.ip || 'unknown'}`;
+  const now = Date.now();
+  const tracker = terminalUnlockFailures.get(attemptKey);
+  if (tracker && tracker.lockedUntil > now) {
+    const waitSec = Math.ceil((tracker.lockedUntil - now) / 1000);
+    return res.status(429).json({
+      success: false,
+      error: `Zbyt wiele nieudanych prób hasła root. Spróbuj ponownie za ${waitSec} s.`,
+    });
+  }
+
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!password) {
+    return res.status(400).json({
+      success: false,
+      error: 'Podaj hasło użytkownika root.',
+    });
+  }
+
+  const shadow = inspectRootShadowStatus();
+  if (!shadow.shadowReadable) {
+    return res.status(403).json({
+      success: false,
+      error:
+        shadow.shadowReason === 'no_shadow_file'
+          ? 'Plik /etc/shadow nie istnieje w tym środowisku.'
+          : 'Brak dostępu do /etc/shadow. Uruchom usługę HarmoniaBell jako użytkownik root.',
+    });
+  }
+  if (!shadow.rootHasPassword || !shadow.hash) {
+    return res.status(403).json({
+      success: false,
+      error:
+        'Konto root w /etc/shadow nie ma ustawionego hasła (wpis * lub !). Ustaw hasło poleceniem "passwd root" w konsoli serwera.',
+    });
+  }
+
+  const valid = verifyShadowPasswordHash(password, shadow.hash);
+  if (!valid) {
+    const nextFailures = (tracker?.failures || 0) + 1;
+    const lockedUntil = nextFailures >= TERMINAL_UNLOCK_MAX_FAILURES ? now + TERMINAL_UNLOCK_LOCKOUT_MS : 0;
+    terminalUnlockFailures.set(attemptKey, { failures: nextFailures, lockedUntil });
+    console.warn(`[HarmoniaBell] Nieudana próba odblokowania terminala root przez użytkownika: ${ctx.user.username}`);
+    return res.status(403).json({
+      success: false,
+      error:
+        lockedUntil > 0
+          ? 'Nieprawidłowe hasło root. Terminal zablokowany na 60 sekund.'
+          : `Nieprawidłowe hasło użytkownika root (próba ${nextFailures}/${TERMINAL_UNLOCK_MAX_FAILURES}).`,
+    });
+  }
+
+  terminalUnlockFailures.delete(attemptKey);
+  const sid = `term_${crypto.randomBytes(12).toString('hex')}`;
+  const sess = getOrCreateTerminalSession(sid, ctx.user.id);
+  const { token, expiresAt } = createTerminalToken(ctx, sid);
+  console.log(`[HarmoniaBell] Odblokowano Terminal Root (sesja WWW: ${ctx.user.username})`);
+
+  res.json({
+    success: true,
+    terminalToken: token,
+    expiresAt,
+    cwd: sess.cwd,
+    hostname: os.hostname(),
+    activeUser: resolveActiveOsUserLabel(),
+  });
+});
+
+app.post('/api/terminal/lock', requireAnyPermission(['terminal_access']), (req: TerminalRequest, res: Response) => {
+  const ctx = req.auth!;
+  const rawHeader = req.headers['x-terminal-token'];
+  const token = typeof rawHeader === 'string' ? rawHeader.trim() : undefined;
+  const verified = verifyTerminalToken(token, ctx);
+  if (verified) {
+    const sess = terminalSessions.get(verified.sid);
+    if (sess?.activeJobId) {
+      const job = terminalJobs.get(sess.activeJobId);
+      if (job && !job.done && job.child?.pid) {
+        try {
+          process.kill(-job.child.pid, 'SIGTERM');
+        } catch {}
+      }
+    }
+    terminalSessions.delete(verified.sid);
+  }
+  res.json({ success: true });
+});
+
+app.post(
+  '/api/terminal/exec',
+  requireAnyPermission(['terminal_access']),
+  requireTerminalUnlocked,
+  async (req: TerminalRequest, res: Response) => {
+    pruneExpiredTerminalState();
+    const ctx = req.auth!;
+    const sess = req.terminalSession!;
+    const rawCmd = typeof req.body?.command === 'string' ? req.body.command : '';
+    const command = rawCmd.replace(/\r\n/g, '\n').trim();
+
+    if (!command) {
+      return res.status(400).json({ success: false, error: 'Wpisz polecenie do wykonania.' });
+    }
+    if (command.length > 8192) {
+      return res.status(400).json({ success: false, error: 'Polecenie przekracza limit 8192 znaków.' });
+    }
+
+    if (sess.activeJobId) {
+      const runningJob = terminalJobs.get(sess.activeJobId);
+      if (runningJob && !runningJob.done) {
+        return res.status(409).json({
+          success: false,
+          error: 'Poprzednie polecenie nadal trwa. Poczekaj na zakończenie lub użyj Przerwij (Ctrl+C).',
+          activeJobId: runningJob.id,
+        });
+      }
+      sess.activeJobId = null;
+    }
+
+    const cwdFile = path.join(os.tmpdir(), `hb-term-cwd-${crypto.randomBytes(8).toString('hex')}`);
+    const bashWrapper = 'trap \'printf "%s" "$PWD" > "$HB_CWD_FILE"\' EXIT\neval "$1"';
+    const jobId = `tjob_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const startCwd = fs.existsSync(sess.cwd) ? sess.cwd : process.cwd();
+
+    const job: TerminalJobRecord = {
+      id: jobId,
+      sid: sess.sid,
+      userId: ctx.user.id,
+      command,
+      cwdBefore: startCwd,
+      cwdAfter: startCwd,
+      startedAt: Date.now(),
+      finishedAt: null,
+      done: false,
+      exitCode: null,
+      signal: null,
+      output: '',
+      truncated: false,
+      child: null,
+      timeoutHandle: null,
+      cwdFile,
+    };
+
+    terminalJobs.set(jobId, job);
+    sess.activeJobId = jobId;
+
+    const appendOutput = (chunk: Buffer | string) => {
+      const cleaned = stripAnsiEscapeCodes(chunk.toString());
+      if (!cleaned) return;
+      if (job.output.length >= TERMINAL_MAX_OUTPUT_CHARS) {
+        job.truncated = true;
+        return;
+      }
+      const remaining = TERMINAL_MAX_OUTPUT_CHARS - job.output.length;
+      if (cleaned.length > remaining) {
+        job.output += cleaned.slice(0, remaining) + '\n[... wyjście obcięte po 512 KB ...]\n';
+        job.truncated = true;
+      } else {
+        job.output += cleaned;
+      }
+    };
+
+    const child = spawn('/bin/bash', ['--noprofile', '--norc', '-c', bashWrapper, '_', command], {
+      cwd: startCwd,
+      env: {
+        ...process.env,
+        HB_CWD_FILE: cwdFile,
+        TERM: 'xterm-256color',
+        NO_COLOR: '1',
+        PAGER: 'cat',
+        SYSTEMD_PAGER: 'cat',
+        DEBIAN_FRONTEND: 'noninteractive',
+        LANG: 'C.UTF-8',
+        LC_ALL: 'C.UTF-8',
+      },
+      detached: true,
+    });
+    job.child = child;
+
+    child.stdout?.on('data', appendOutput);
+    child.stderr?.on('data', appendOutput);
+
+    let finished = false;
+    const finalizeJob = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (finished) return;
+      finished = true;
+      if (job.timeoutHandle) {
+        clearTimeout(job.timeoutHandle);
+        job.timeoutHandle = null;
+      }
+      try {
+        if (fs.existsSync(cwdFile)) {
+          const nextCwd = fs.readFileSync(cwdFile, 'utf-8').trim();
+          fs.unlinkSync(cwdFile);
+          if (nextCwd && fs.existsSync(nextCwd) && fs.statSync(nextCwd).isDirectory()) {
+            sess.cwd = nextCwd;
+            job.cwdAfter = nextCwd;
+          }
+        }
+      } catch {}
+      job.done = true;
+      job.exitCode = code;
+      job.signal = signal;
+      job.finishedAt = Date.now();
+      job.child = null;
+      if (sess.activeJobId === job.id) {
+        sess.activeJobId = null;
+      }
+    };
+
+    child.on('error', (err) => {
+      appendOutput(`\n[Błąd uruchomienia procesu]: ${err.message}\n`);
+      finalizeJob(127, null);
+    });
+
+    child.on('close', (code, signal) => {
+      finalizeJob(code, signal);
+    });
+
+    job.timeoutHandle = setTimeout(() => {
+      if (!job.done && job.child?.pid) {
+        appendOutput('\n[Przekroczono limit czasu 10 min — wysłano SIGINT]\n');
+        try {
+          process.kill(-job.child.pid, 'SIGINT');
+        } catch {}
+        setTimeout(() => {
+          if (!job.done && job.child?.pid) {
+            try {
+              process.kill(-job.child.pid, 'SIGKILL');
+            } catch {}
+          }
+        }, 2000);
+      }
+    }, TERMINAL_JOB_TIMEOUT_MS);
+
+    // Wait briefly so fast commands finish in a single round-trip
+    await new Promise<void>((resolve) => {
+      if (job.done) return resolve();
+      const timer = setTimeout(() => resolve(), 350);
+      child.once('close', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.once('error', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    const refreshed = createTerminalToken(ctx, sess.sid);
+    res.json({
+      success: true,
+      terminalToken: refreshed.token,
+      expiresAt: refreshed.expiresAt,
+      cwd: sess.cwd,
+      job: serializeTerminalJob(job, 0),
+    });
+  }
+);
+
+app.get(
+  '/api/terminal/job/:jobId',
+  requireAnyPermission(['terminal_access']),
+  requireTerminalUnlocked,
+  (req: TerminalRequest, res: Response) => {
+    const ctx = req.auth!;
+    const sess = req.terminalSession!;
+    const job = terminalJobs.get(String(req.params.jobId || ''));
+    if (!job || job.userId !== ctx.user.id || job.sid !== sess.sid) {
+      return res.status(404).json({ success: false, error: 'Nie znaleziono zadania terminala.' });
+    }
+    const rawOffset = Number(req.query.offset);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+    const refreshed = createTerminalToken(ctx, sess.sid);
+    res.json({
+      success: true,
+      terminalToken: refreshed.token,
+      expiresAt: refreshed.expiresAt,
+      cwd: sess.cwd,
+      job: serializeTerminalJob(job, offset),
+    });
+  }
+);
+
+app.post(
+  '/api/terminal/input',
+  requireAnyPermission(['terminal_access']),
+  requireTerminalUnlocked,
+  (req: TerminalRequest, res: Response) => {
+    const ctx = req.auth!;
+    const sess = req.terminalSession!;
+    const jobId = typeof req.body?.jobId === 'string' ? req.body.jobId : sess.activeJobId || '';
+    const job = terminalJobs.get(jobId);
+    if (!job || job.userId !== ctx.user.id || job.sid !== sess.sid || job.done || !job.child?.stdin) {
+      return res.status(400).json({ success: false, error: 'Brak aktywnego procesu oczekującego na dane wejściowe.' });
+    }
+    if (req.body?.eof === true) {
+      try {
+        job.child.stdin.end();
+      } catch {}
+      return res.json({ success: true });
+    }
+    const inputText = typeof req.body?.input === 'string' ? req.body.input : '';
+    try {
+      job.child.stdin.write(`${inputText}\n`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err?.message || 'Błąd zapisu na stdin.' });
+    }
+  }
+);
+
+app.post(
+  '/api/terminal/interrupt',
+  requireAnyPermission(['terminal_access']),
+  requireTerminalUnlocked,
+  (req: TerminalRequest, res: Response) => {
+    const ctx = req.auth!;
+    const sess = req.terminalSession!;
+    const jobId = typeof req.body?.jobId === 'string' ? req.body.jobId : sess.activeJobId || '';
+    const job = terminalJobs.get(jobId);
+    if (!job || job.userId !== ctx.user.id || job.sid !== sess.sid || job.done || !job.child?.pid) {
+      return res.json({ success: true, alreadyFinished: true });
+    }
+    const forceKill = req.body?.force === true;
+    const pid = job.child.pid;
+    try {
+      process.kill(-pid, forceKill ? 'SIGKILL' : 'SIGINT');
+    } catch {
+      try {
+        job.child.kill(forceKill ? 'SIGKILL' : 'SIGINT');
+      } catch {}
+    }
+    res.json({ success: true });
+  }
+);
 
 /* ===================== FRONTEND SERVING & DEV MODE ===================== */
 async function startServer() {

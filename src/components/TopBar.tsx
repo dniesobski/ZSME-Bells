@@ -34,6 +34,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     { id: 'volume', label: 'Ustawienia', requiredPerm: 'volume_edit' },
     { id: 'tv', label: 'Ekran TV' },
     { id: 'debian', label: 'Debian 13', requiredPerm: 'debian_view' },
+    { id: 'terminal', label: 'Terminal', requiredPerm: 'terminal_access' },
     { id: 'logs', label: 'Dziennik', requiredPerm: 'logs_view' },
     { id: 'account', label: canManageUsers ? 'Konta i Grupy' : 'Moje konto' },
   ];

@@ -17,6 +17,7 @@ export const ALL_PERMISSION_KEYS: PermissionKey[] = [
   'volume_edit',
   'logs_view',
   'debian_view',
+  'terminal_access',
   'users_manage',
 ];
 
@@ -75,6 +76,12 @@ export const PERMISSION_DEFINITIONS: PermissionMeta[] = [
     tabId: 'debian',
   },
   {
+    key: 'terminal_access',
+    label: 'Terminal Root (Debian 13)',
+    description: 'Wykonywanie poleceń systemowych jako root po weryfikacji hasła z /etc/shadow',
+    tabId: 'terminal',
+  },
+  {
     key: 'users_manage',
     label: 'Użytkownicy i grupy uprawnień',
     description: 'Tworzenie grup, konfiguracja uprawnień oraz zarządzanie kontami użytkowników',
@@ -105,5 +112,6 @@ export function getDefaultTabForPermissions(permissions: PermissionKey[]): strin
   if (permissions.includes('volume_edit')) return 'volume';
   if (permissions.includes('logs_view')) return 'logs';
   if (permissions.includes('debian_view')) return 'debian';
+  if (permissions.includes('terminal_access')) return 'terminal';
   return 'account';
 }

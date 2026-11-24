@@ -6,6 +6,7 @@ import { SoundsView } from './components/SoundsView';
 import { CalendarView } from './components/CalendarView';
 import { VolumeView } from './components/VolumeView';
 import { DebianGuideView } from './components/DebianGuideView';
+import { TerminalView } from './components/TerminalView';
 import { LogsView } from './components/LogsView';
 import { RadioView } from './components/RadioView';
 import { TvDisplayView } from './components/TvDisplayView';
@@ -67,6 +68,8 @@ export default function App() {
     }))
   );
   const [history, setHistory] = useState<BellHistoryEntry[]>([]);
+  const [terminalToken, setTerminalToken] = useState<string | null>(null);
+  const [terminalExpiresAt, setTerminalExpiresAt] = useState<number | null>(null);
   const [isManualBellOpen, setIsManualBellOpen] = useState(false);
   const [notification, setNotification] = useState<{
     msg: string;
@@ -80,6 +83,8 @@ export default function App() {
 
   const handleUnauthorized = useCallback(() => {
     setStoredAuthToken(null);
+    setTerminalToken(null);
+    setTerminalExpiresAt(null);
     setAuth((prev) => ({
       ...prev,
       authenticated: false,
@@ -227,6 +232,7 @@ export default function App() {
       calendar: 'calendar_edit',
       volume: 'volume_edit',
       debian: 'debian_view',
+      terminal: 'terminal_access',
       logs: 'logs_view',
     };
     const needed = tabPermMap[activeTab];
@@ -300,11 +306,19 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
+      if (terminalToken) {
+        await apiFetch('/api/terminal/lock', {
+          method: 'POST',
+          headers: { 'X-Terminal-Token': terminalToken },
+        });
+      }
       await apiFetch('/api/auth/logout', { method: 'POST' });
     } catch {
       // Ignore error on logout
     }
     setStoredAuthToken(null);
+    setTerminalToken(null);
+    setTerminalExpiresAt(null);
     setAuth((prev) => ({
       ...prev,
       authenticated: false,
@@ -634,6 +648,7 @@ export default function App() {
   const canCalendar = hasPermission(auth, 'calendar_edit');
   const canVolume = hasPermission(auth, 'volume_edit');
   const canDebian = hasPermission(auth, 'debian_view');
+  const canTerminal = hasPermission(auth, 'terminal_access');
   const canLogs = hasPermission(auth, 'logs_view');
 
   const noAccessCard = (
@@ -800,6 +815,20 @@ export default function App() {
         {activeTab === 'debian' &&
           (canDebian ? (
             <DebianGuideView config={config} onImportConfig={handleSaveConfig} />
+          ) : (
+            noAccessCard
+          ))}
+
+        {activeTab === 'terminal' &&
+          (canTerminal ? (
+            <TerminalView
+              terminalToken={terminalToken}
+              terminalExpiresAt={terminalExpiresAt}
+              onTerminalAuthChange={(tok, exp) => {
+                setTerminalToken(tok);
+                setTerminalExpiresAt(exp);
+              }}
+            />
           ) : (
             noAccessCard
           ))}
