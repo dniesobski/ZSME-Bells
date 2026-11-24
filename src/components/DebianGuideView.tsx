@@ -18,6 +18,8 @@ import {
   Loader2,
   Link2,
   Unlink,
+  RotateCw,
+  Power,
 } from 'lucide-react';
 import {
   AppConfig,
@@ -46,6 +48,12 @@ export const DebianGuideView: React.FC<DebianGuideViewProps> = ({ config, onImpo
   const [isSavingGitConfig, setIsSavingGitConfig] = useState(false);
   const [gitConfigMessage, setGitConfigMessage] = useState<{
     type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+  const [confirmPowerAction, setConfirmPowerAction] = useState<'service' | 'reboot' | null>(null);
+  const [isTriggeringPowerAction, setIsTriggeringPowerAction] = useState(false);
+  const [powerActionMsg, setPowerActionMsg] = useState<{
+    type: 'success' | 'error' | 'info';
     text: string;
   } | null>(null);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
@@ -197,6 +205,64 @@ export const DebianGuideView: React.FC<DebianGuideViewProps> = ({ config, onImpo
       setUpdateError(err.message || 'Błąd uruchamiania aktualizacji.');
     } finally {
       setIsStartingUpdate(false);
+    }
+  };
+
+  const handleRestartService = async () => {
+    setIsTriggeringPowerAction(true);
+    setPowerActionMsg(null);
+    try {
+      const res = await apiFetch('/api/debian/restart-service', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error || 'Nie udało się zrestartować usługi.');
+      }
+      setConfirmPowerAction(null);
+      setPowerActionMsg({
+        type: 'success',
+        text: data.message || 'Zaplanowano restart usługi. Oczekiwanie na ponowne połączenie...',
+      });
+      setTimeout(() => {
+        void fetchUpdateStatus();
+      }, 4500);
+    } catch (err: any) {
+      setPowerActionMsg({
+        type: 'error',
+        text: err?.message || 'Błąd podczas restartu usługi.',
+      });
+    } finally {
+      setIsTriggeringPowerAction(false);
+    }
+  };
+
+  const handleRebootSystem = async () => {
+    setIsTriggeringPowerAction(true);
+    setPowerActionMsg(null);
+    try {
+      const res = await apiFetch('/api/debian/reboot-system', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error || 'Nie udało się zrestartować systemu.');
+      }
+      setConfirmPowerAction(null);
+      setPowerActionMsg({
+        type: 'info',
+        text: data.message || 'Serwer Debian 13 uruchamia się ponownie. Panel wróci po starcie systemu.',
+      });
+    } catch (err: any) {
+      setPowerActionMsg({
+        type: 'error',
+        text: err?.message || 'Błąd podczas zlecania restartu systemu.',
+      });
+    } finally {
+      setIsTriggeringPowerAction(false);
     }
   };
 
@@ -358,6 +424,126 @@ echo "Status: systemctl status harmonia-bell"
             </label>
           </div>
         </div>
+      </div>
+
+      {/* Service Restart & Debian 13 System Reboot Controls */}
+      <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+              <Power className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                Sterowanie Usługą i Systemem Debian 13
+              </h3>
+              <p className="text-xs text-slate-400">
+                Szybki restart usługi kontrolera dzwonków (<code className="font-mono text-slate-300">harmoniabell.service</code>) lub pełny restart komputera Debian 13
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              disabled={isTriggeringPowerAction || updateJob?.state === 'running'}
+              onClick={() => {
+                setPowerActionMsg(null);
+                setConfirmPowerAction((prev) => (prev === 'service' ? null : 'service'));
+              }}
+              className="px-3.5 py-2 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-200 text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${isTriggeringPowerAction && confirmPowerAction === 'service' ? 'animate-spin' : ''}`} />
+              <span>Restartuj usługę</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isTriggeringPowerAction || updateJob?.state === 'running'}
+              onClick={() => {
+                setPowerActionMsg(null);
+                setConfirmPowerAction((prev) => (prev === 'reboot' ? null : 'reboot'));
+              }}
+              className="px-3.5 py-2 rounded-lg bg-rose-950/70 hover:bg-rose-900/80 border border-rose-700/80 text-rose-200 text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <Power className="w-3.5 h-3.5" />
+              <span>Restartuj system (Reboot)</span>
+            </button>
+          </div>
+        </div>
+
+        {confirmPowerAction === 'service' && (
+          <div className="p-3.5 rounded-lg bg-sky-950/40 border border-sky-700/70 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <span className="text-sky-100">
+              Czy na pewno chcesz zrestartować usługę HarmoniaBell? Połączenie z panelem zostanie przerwane na kilka sekund.
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isTriggeringPowerAction}
+                onClick={() => setConfirmPowerAction(null)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium cursor-pointer"
+              >
+                Anuluj
+              </button>
+              <button
+                type="button"
+                disabled={isTriggeringPowerAction}
+                onClick={handleRestartService}
+                className="px-3.5 py-1.5 rounded-lg bg-sky-400 hover:bg-sky-300 text-slate-950 font-bold cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${isTriggeringPowerAction ? 'animate-spin' : ''}`} />
+                <span>{isTriggeringPowerAction ? 'Restartowanie...' : 'Potwierdź restart usługi'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {confirmPowerAction === 'reboot' && (
+          <div className="p-3.5 rounded-lg bg-rose-950/50 border border-rose-700/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <span className="text-rose-100">
+              Uwaga: spowoduje to pełne ponowne uruchomienie serwera Debian 13. Wszystkie połączenia zostaną rozłączone do czasu ponownego startu systemu.
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isTriggeringPowerAction}
+                onClick={() => setConfirmPowerAction(null)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium cursor-pointer"
+              >
+                Anuluj
+              </button>
+              <button
+                type="button"
+                disabled={isTriggeringPowerAction}
+                onClick={handleRebootSystem}
+                className="px-3.5 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-400 text-white font-bold cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Power className="w-3.5 h-3.5" />
+                <span>{isTriggeringPowerAction ? 'Wysyłanie reboot...' : 'Potwierdź restart systemu'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {powerActionMsg && (
+          <div
+            className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+              powerActionMsg.type === 'error'
+                ? 'bg-rose-950/60 border-rose-800/80 text-rose-200'
+                : powerActionMsg.type === 'success'
+                ? 'bg-emerald-950/50 border-emerald-800/80 text-emerald-200'
+                : 'bg-amber-950/50 border-amber-800/80 text-amber-200'
+            }`}
+          >
+            {powerActionMsg.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            ) : (
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
+            <span>{powerActionMsg.text}</span>
+          </div>
+        )}
       </div>
 
       {/* Update Check & Auto-Update Panel */}

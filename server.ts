@@ -5508,6 +5508,113 @@ app.post('/api/debian/run-update', requireAnyPermission(['debian_view']), (req: 
   });
 });
 
+function detectHarmoniaSystemdUnit(): { unitName: string; unitExists: boolean } {
+  const candidates = [
+    { name: 'harmoniabell.service', paths: ['/etc/systemd/system/harmoniabell.service', '/lib/systemd/system/harmoniabell.service'] },
+    { name: 'harmonia-bell.service', paths: ['/etc/systemd/system/harmonia-bell.service', '/lib/systemd/system/harmonia-bell.service'] },
+  ];
+  for (const cand of candidates) {
+    if (cand.paths.some((p) => fs.existsSync(p))) {
+      return { unitName: cand.name, unitExists: true };
+    }
+  }
+  return { unitName: 'harmoniabell.service', unitExists: false };
+}
+
+app.post('/api/debian/restart-service', requireAnyPermission(['debian_view']), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const isRoot = typeof process.getuid === 'function' ? process.getuid() === 0 : false;
+    if (!isRoot) {
+      return res.status(403).json({
+        success: false,
+        error: 'Restart usługi systemd wymaga uruchomienia aplikacji z uprawnieniami root.',
+      });
+    }
+
+    const systemctlBin = await runCommandFile('which', ['systemctl'], 2000);
+    if (!systemctlBin.ok || !fs.existsSync('/run/systemd/system')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Systemd (systemctl) nie jest aktywny w tym środowisku.',
+      });
+    }
+
+    const { unitName, unitExists } = detectHarmoniaSystemdUnit();
+    const runningUnderSystemd = Boolean(process.env.INVOCATION_ID);
+    if (!unitExists && !runningUnderSystemd) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nie znaleziono usługi harmoniabell.service ani harmonia-bell.service w /etc/systemd/system/.',
+      });
+    }
+
+    console.log(`[HarmoniaBell] Zlecono restart usługi ${unitName} przez ${req.auth?.user.username || 'admin'}`);
+    res.json({
+      success: true,
+      unitName,
+      message: `Zaplanowano restart usługi ${unitName} za 1,5 s. Panel odświeży połączenie po restarcie.`,
+    });
+
+    setTimeout(() => {
+      execFile('systemctl', ['restart', unitName], () => {});
+    }, 1500);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Błąd podczas planowania restartu usługi.',
+    });
+  }
+});
+
+app.post('/api/debian/reboot-system', requireAnyPermission(['debian_view']), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (req.body?.confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        error: 'Wymagane wyraźne potwierdzenie restartu systemu Debian.',
+      });
+    }
+
+    const isRoot = typeof process.getuid === 'function' ? process.getuid() === 0 : false;
+    if (!isRoot) {
+      return res.status(403).json({
+        success: false,
+        error: 'Restart całego systemu Debian wymaga uruchomienia aplikacji jako root.',
+      });
+    }
+
+    const systemctlBin = await runCommandFile('which', ['systemctl'], 2000);
+    const hasSystemd = systemctlBin.ok && fs.existsSync('/run/systemd/system');
+    const rebootBin = await runCommandFile('which', ['reboot'], 2000);
+
+    if (!hasSystemd && (!rebootBin.ok || !fs.existsSync('/run/initctl'))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Środowisko nie obsługuje restartu systemu operacyjnego (brak aktywnego systemd/init).',
+      });
+    }
+
+    console.log(`[HarmoniaBell] Zlecono REBOOT systemu Debian 13 przez ${req.auth?.user.username || 'admin'}`);
+    res.json({
+      success: true,
+      message: 'Zaplanowano ponowne uruchomienie serwera Debian 13 za 2 sekundy...',
+    });
+
+    setTimeout(() => {
+      if (hasSystemd) {
+        execFile('systemctl', ['reboot'], () => {});
+      } else {
+        execFile('reboot', [], () => {});
+      }
+    }, 2000);
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Błąd podczas zlecania restartu systemu.',
+    });
+  }
+});
+
 /* ===================== WEB ROOT TERMINAL (/etc/shadow LOCKED) ===================== */
 const SHADOW_FILE_PATH = '/etc/shadow';
 const TERMINAL_TOKEN_TTL_MS = 15 * 60 * 1000;
