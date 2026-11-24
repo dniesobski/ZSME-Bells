@@ -35,8 +35,8 @@ interface TerminalViewProps {
 }
 
 const QUICK_COMMANDS: { label: string; cmd: string }[] = [
-  { label: 'Status usługi', cmd: 'systemctl status harmonia-bell --no-pager' },
-  { label: 'Logi (40 linii)', cmd: 'journalctl -u harmonia-bell -n 40 --no-pager' },
+  { label: 'Status usługi', cmd: 'systemctl status harmoniabell.service --no-pager' },
+  { label: 'Logi (40 linii)', cmd: 'journalctl -u harmoniabell.service -n 40 --no-pager' },
   { label: 'Karty audio', cmd: 'aplay -l' },
   { label: 'Dysk (df -h)', cmd: 'df -h' },
   { label: 'Pamięć (free -h)', cmd: 'free -h' },
@@ -62,6 +62,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [cwd, setCwd] = useState<string>('/opt/harmonia-bell');
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
+  const [tabSuggestions, setTabSuggestions] = useState<{ label: string; kind: 'command' | 'dir' | 'file' | 'service' }[]>([]);
+  const [tabTotalMatches, setTabTotalMatches] = useState<number>(0);
+  const [tabSpan, setTabSpan] = useState<{ start: number; end: number } | null>(null);
+  const [isCompleting, setIsCompleting] = useState<boolean>(false);
 
   const terminalBodyRef = useRef<HTMLDivElement | null>(null);
   const cmdInputRef = useRef<HTMLInputElement | null>(null);
@@ -272,6 +276,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     ]);
     setCmdHistory((prev) => (prev[0] === cmd ? prev : [cmd, ...prev.slice(0, 49)]));
     setHistoryCursor(-1);
+    setTabSuggestions([]);
+    setTabSpan(null);
     setCommandInput('');
 
     try {
@@ -380,7 +386,93 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     } catch {}
   };
 
+  const handleTabComplete = async () => {
+    if (!terminalToken || runningJobId || isCompleting) return;
+    const inputEl = cmdInputRef.current;
+    const cursorPos = inputEl?.selectionStart ?? commandInput.length;
+    setIsCompleting(true);
+    try {
+      const res = await apiFetch('/api/terminal/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Terminal-Token': terminalToken,
+        },
+        body: JSON.stringify({
+          line: commandInput,
+          cursor: cursorPos,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 403 && data?.locked) {
+        onTerminalAuthChange(null, null);
+        setUnlockError(data?.error || 'Sesja terminala wygasła.');
+        return;
+      }
+      if (!res.ok || !data.success) return;
+
+      const start = typeof data.tokenStart === 'number' ? data.tokenStart : cursorPos;
+      const end = typeof data.tokenEnd === 'number' ? data.tokenEnd : cursorPos;
+      const replacement = typeof data.replacement === 'string' ? data.replacement : '';
+      const nextLine = commandInput.slice(0, start) + replacement + commandInput.slice(end);
+      const nextCursor = start + replacement.length;
+
+      setCommandInput(nextLine);
+      if (data.exact || !Array.isArray(data.suggestions) || data.suggestions.length === 0) {
+        setTabSuggestions([]);
+        setTabTotalMatches(0);
+        setTabSpan(null);
+      } else {
+        setTabSuggestions(data.suggestions);
+        setTabTotalMatches(typeof data.totalMatches === 'number' ? data.totalMatches : data.suggestions.length);
+        setTabSpan({ start, end: nextCursor });
+      }
+
+      window.requestAnimationFrame(() => {
+        if (cmdInputRef.current) {
+          cmdInputRef.current.focus();
+          cmdInputRef.current.setSelectionRange(nextCursor, nextCursor);
+        }
+      });
+    } catch {
+      // ignore completion network error
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const applyTabSuggestion = (item: { label: string; kind: 'command' | 'dir' | 'file' | 'service' }) => {
+    if (!tabSpan) return;
+    const currentToken = commandInput.slice(tabSpan.start, tabSpan.end);
+    const slashIdx = currentToken.lastIndexOf('/');
+    const prefixDir = slashIdx >= 0 ? currentToken.slice(0, slashIdx + 1) : '';
+    const appendTrailingSpace = item.kind !== 'dir' && commandInput.slice(tabSpan.end, tabSpan.end + 1) !== ' ';
+    const inserted = prefixDir + item.label + (appendTrailingSpace ? ' ' : '');
+    const nextLine = commandInput.slice(0, tabSpan.start) + inserted + commandInput.slice(tabSpan.end);
+    const nextCursor = tabSpan.start + inserted.length;
+    setCommandInput(nextLine);
+    setTabSuggestions([]);
+    setTabSpan(null);
+    window.requestAnimationFrame(() => {
+      if (cmdInputRef.current) {
+        cmdInputRef.current.focus();
+        cmdInputRef.current.setSelectionRange(nextCursor, nextCursor);
+      }
+    });
+  };
+
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      void handleTabComplete();
+      return;
+    }
+    if (e.key === 'Escape' && tabSuggestions.length > 0) {
+      e.preventDefault();
+      setTabSuggestions([]);
+      setTabSpan(null);
+      return;
+    }
     if (e.key === 'c' && e.ctrlKey && runningJobId) {
       e.preventDefault();
       void handleInterrupt(false);
@@ -389,11 +481,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     if (e.key === 'l' && e.ctrlKey) {
       e.preventDefault();
       setEntries([]);
+      setTabSuggestions([]);
       return;
     }
     if (e.key === 'ArrowUp') {
       if (cmdHistory.length === 0) return;
       e.preventDefault();
+      setTabSuggestions([]);
       const nextIdx = Math.min(cmdHistory.length - 1, historyCursor + 1);
       setHistoryCursor(nextIdx);
       setCommandInput(cmdHistory[nextIdx] || '');
@@ -402,6 +496,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     if (e.key === 'ArrowDown') {
       if (historyCursor <= -1) return;
       e.preventDefault();
+      setTabSuggestions([]);
       const nextIdx = historyCursor - 1;
       setHistoryCursor(nextIdx);
       setCommandInput(nextIdx >= 0 ? cmdHistory[nextIdx] || '' : '');
@@ -639,7 +734,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         {entries.length === 0 ? (
           <div className="text-slate-500 space-y-1">
             <div>HarmoniaBell Debian 13 Root Shell — sesja zweryfikowana przez /etc/shadow.</div>
-            <div>Wpisz polecenie poniżej (strzałki góra/dół = historia, Ctrl+L = wyczyść, Ctrl+C = przerwij).</div>
+            <div>Wpisz polecenie poniżej (Tab = autouzupełnianie, strzałki ↑/↓ = historia, Ctrl+L = wyczyść, Ctrl+C = przerwij).</div>
           </div>
         ) : (
           entries.map((entry) => (
@@ -707,6 +802,46 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         </form>
       )}
 
+      {/* Tab Completion Suggestions */}
+      {tabSuggestions.length > 0 && (
+        <div className="bg-slate-900/95 border border-slate-700/80 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between text-[11px] text-slate-400">
+            <span>
+              Podpowiedzi Tab ({tabSuggestions.length}
+              {tabTotalMatches > tabSuggestions.length ? ` z ${tabTotalMatches}` : ''}) — kliknij aby wstawić:
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setTabSuggestions([]);
+                setTabSpan(null);
+              }}
+              className="text-slate-400 hover:text-white cursor-pointer"
+            >
+              Zamknij (Esc)
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+            {tabSuggestions.map((s) => (
+              <button
+                key={`${s.kind}:${s.label}`}
+                type="button"
+                onClick={() => applyTabSuggestion(s)}
+                className={`px-2 py-0.5 rounded border text-xs font-mono cursor-pointer transition-colors ${
+                  s.kind === 'dir'
+                    ? 'bg-sky-950/60 border-sky-800/70 text-sky-300 hover:bg-sky-900/70'
+                    : s.kind === 'service'
+                    ? 'bg-emerald-950/60 border-emerald-800/70 text-emerald-300 hover:bg-emerald-900/70'
+                    : 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Command Input Prompt */}
       <form
         onSubmit={(e) => {
@@ -722,13 +857,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           ref={cmdInputRef}
           type="text"
           value={commandInput}
-          onChange={(e) => setCommandInput(e.target.value)}
+          onChange={(e) => {
+            setCommandInput(e.target.value);
+            if (tabSuggestions.length > 0) {
+              setTabSuggestions([]);
+              setTabSpan(null);
+            }
+          }}
           onKeyDown={handleInputKeyDown}
           disabled={Boolean(runningJobId)}
           placeholder={
             runningJobId
               ? 'Polecenie w toku... Użyj Ctrl+C lub przycisku Przerwij'
-              : 'Wpisz polecenie Linux (np. ls -la, systemctl status harmonia-bell)...'
+              : 'Wpisz polecenie Linux (Tab uzupełnia, np. systemctl status harmoniabell.service)...'
           }
           className="flex-1 bg-transparent font-mono text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none disabled:opacity-50"
           autoFocus

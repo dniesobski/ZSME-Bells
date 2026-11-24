@@ -6168,6 +6168,246 @@ app.post(
   }
 );
 
+function longestCommonPrefix(values: string[]): string {
+  if (values.length === 0) return '';
+  let prefix = values[0];
+  for (let i = 1; i < values.length; i++) {
+    const cur = values[i];
+    let j = 0;
+    while (j < prefix.length && j < cur.length && prefix[j] === cur[j]) {
+      j++;
+    }
+    prefix = prefix.slice(0, j);
+    if (!prefix) break;
+  }
+  return prefix;
+}
+
+const SHELL_BUILTIN_COMMANDS = [
+  'alias',
+  'bg',
+  'cd',
+  'clear',
+  'echo',
+  'exit',
+  'export',
+  'fg',
+  'history',
+  'jobs',
+  'kill',
+  'pwd',
+  'set',
+  'source',
+  'type',
+  'ulimit',
+  'umask',
+  'unset',
+  'wait',
+];
+
+function isPathDirectory(fullPath: string, entry: fs.Dirent): boolean {
+  if (entry.isDirectory()) return true;
+  if (entry.isSymbolicLink()) {
+    try {
+      return fs.statSync(fullPath).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function listSystemdUnitNames(): string[] {
+  const unitDirs = ['/etc/systemd/system', '/lib/systemd/system', '/usr/lib/systemd/system'];
+  const units = new Set<string>();
+  for (const dir of unitDirs) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.endsWith('.service') || entry.name.endsWith('.timer') || entry.name.endsWith('.target')) {
+          units.add(entry.name);
+        }
+      }
+    } catch {}
+  }
+  return Array.from(units);
+}
+
+app.post(
+  '/api/terminal/complete',
+  requireAnyPermission(['terminal_access']),
+  requireTerminalUnlocked,
+  (req: TerminalRequest, res: Response) => {
+    const sess = req.terminalSession!;
+    const rawLine = typeof req.body?.line === 'string' ? req.body.line : '';
+    const line = rawLine.slice(0, 8192);
+    const rawCursor = typeof req.body?.cursor === 'number' ? req.body.cursor : line.length;
+    const cursor = Math.max(0, Math.min(line.length, Math.floor(rawCursor)));
+
+    const beforeCursor = line.slice(0, cursor);
+    const segMatch = beforeCursor.match(/(?:^|[;|&]\s*)([\s\S]*)$/);
+    const segment = segMatch ? segMatch[1] : beforeCursor;
+    const tokenMatch = beforeCursor.match(/([^\s;|&]*)$/);
+    const token = tokenMatch ? tokenMatch[1] : '';
+    const tokenStart = cursor - token.length;
+
+    const segmentBeforeToken = segment.slice(0, Math.max(0, segment.length - token.length)).trim();
+    const isCommandPosition = segmentBeforeToken.length === 0;
+    const segWords = segmentBeforeToken.split(/\s+/).filter(Boolean);
+    const cmdName = segWords[0] || '';
+
+    type CompletionCandidate = {
+      insertText: string;
+      label: string;
+      kind: 'command' | 'dir' | 'file' | 'service';
+      appendSpace: boolean;
+    };
+
+    const candidates = new Map<string, CompletionCandidate>();
+
+    const shouldCompleteAsPath =
+      !isCommandPosition || token.includes('/') || token.startsWith('.') || token.startsWith('~');
+
+    if (isCommandPosition && !token.includes('/') && !token.startsWith('.') && !token.startsWith('~')) {
+      for (const builtin of SHELL_BUILTIN_COMMANDS) {
+        if (builtin.startsWith(token)) {
+          candidates.set(`cmd:${builtin}`, {
+            insertText: builtin,
+            label: builtin,
+            kind: 'command',
+            appendSpace: true,
+          });
+        }
+      }
+
+      const pathDirs = (process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')
+        .split(':')
+        .filter(Boolean);
+      const seenPathDirs = new Set<string>();
+      for (const dir of pathDirs) {
+        if (seenPathDirs.has(dir)) continue;
+        seenPathDirs.add(dir);
+        try {
+          if (!fs.existsSync(dir)) continue;
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (!entry.name.startsWith(token)) continue;
+            if (isPathDirectory(path.join(dir, entry.name), entry)) continue;
+            if (!candidates.has(`cmd:${entry.name}`)) {
+              candidates.set(`cmd:${entry.name}`, {
+                insertText: entry.name,
+                label: entry.name,
+                kind: 'command',
+                appendSpace: true,
+              });
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (shouldCompleteAsPath) {
+      const lastSlash = token.lastIndexOf('/');
+      const dirPart = lastSlash >= 0 ? token.slice(0, lastSlash + 1) : '';
+      const namePrefix = lastSlash >= 0 ? token.slice(lastSlash + 1) : token;
+      const showHidden = namePrefix.startsWith('.');
+
+      let fsDir = sess.cwd;
+      if (dirPart === '~/' || dirPart.startsWith('~/')) {
+        fsDir = path.resolve(os.homedir(), dirPart.slice(2));
+      } else if (dirPart) {
+        fsDir = path.resolve(sess.cwd, dirPart);
+      }
+
+      try {
+        if (fs.existsSync(fsDir) && fs.statSync(fsDir).isDirectory()) {
+          const entries = fs.readdirSync(fsDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (!showHidden && entry.name.startsWith('.')) continue;
+            if (!entry.name.startsWith(namePrefix)) continue;
+            const fullEntryPath = path.join(fsDir, entry.name);
+            const isDir = isPathDirectory(fullEntryPath, entry);
+            if (isCommandPosition && !isDir) {
+              try {
+                fs.accessSync(fullEntryPath, fs.constants.X_OK);
+              } catch {
+                continue;
+              }
+            }
+            const suffix = isDir ? '/' : '';
+            const insertText = `${dirPart}${entry.name}${suffix}`;
+            candidates.set(`path:${insertText}`, {
+              insertText,
+              label: `${entry.name}${suffix}`,
+              kind: isDir ? 'dir' : 'file',
+              appendSpace: !isDir,
+            });
+          }
+        }
+      } catch {}
+    }
+
+    if (
+      !isCommandPosition &&
+      !token.includes('/') &&
+      (cmdName === 'systemctl' ||
+        cmdName === 'service' ||
+        (cmdName === 'journalctl' && segWords.includes('-u')))
+    ) {
+      for (const unit of listSystemdUnitNames()) {
+        if (unit.startsWith(token)) {
+          candidates.set(`svc:${unit}`, {
+            insertText: unit,
+            label: unit,
+            kind: 'service',
+            appendSpace: true,
+          });
+        }
+      }
+    }
+
+    const sorted = Array.from(candidates.values()).sort((a, b) => a.label.localeCompare(b.label));
+    if (sorted.length === 0) {
+      return res.json({
+        success: true,
+        tokenStart,
+        tokenEnd: cursor,
+        replacement: token,
+        exact: false,
+        suggestions: [],
+        totalMatches: 0,
+      });
+    }
+
+    if (sorted.length === 1) {
+      const only = sorted[0];
+      const nextChar = line.slice(cursor, cursor + 1);
+      const needsTrailingSpace = only.appendSpace && nextChar !== ' ';
+      return res.json({
+        success: true,
+        tokenStart,
+        tokenEnd: cursor,
+        replacement: only.insertText + (needsTrailingSpace ? ' ' : ''),
+        exact: true,
+        suggestions: [],
+        totalMatches: 1,
+      });
+    }
+
+    const commonPrefix = longestCommonPrefix(sorted.map((c) => c.insertText));
+    const replacement = commonPrefix.length > token.length ? commonPrefix : token;
+
+    res.json({
+      success: true,
+      tokenStart,
+      tokenEnd: cursor,
+      replacement,
+      exact: false,
+      suggestions: sorted.slice(0, 60).map((c) => ({ label: c.label, kind: c.kind })),
+      totalMatches: sorted.length,
+    });
+  }
+);
+
 /* ===================== FRONTEND SERVING & DEV MODE ===================== */
 async function startServer() {
   const distPath = path.resolve(process.cwd(), 'dist');
