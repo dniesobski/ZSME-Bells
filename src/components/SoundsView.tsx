@@ -138,6 +138,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
   }));
   const [isSavingRand, setIsSavingRand] = useState(false);
   const [isDrawingRand, setIsDrawingRand] = useState(false);
+  const [isTogglingRand, setIsTogglingRand] = useState(false);
   const [randSavedOk, setRandSavedOk] = useState(false);
   const [randMsg, setRandMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const customWeeksInputRef = useRef<HTMLInputElement | null>(null);
@@ -503,6 +504,42 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
       });
     } finally {
       setIsSavingRand(false);
+    }
+  };
+
+  const handleToggleRandomizerEnabled = async (nextEnabled: boolean) => {
+    if (isTogglingRand) return;
+    setIsTogglingRand(true);
+    setRandMsg(null);
+    try {
+      const res = await apiFetch('/api/sounds/randomizer/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: nextEnabled }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data?.error || 'Nie udało się zmienić trybu dzwonków.');
+      }
+      if (data.bellRandomizer) {
+        setRandomizer(data.bellRandomizer);
+      } else {
+        setRandomizer((prev) => ({ ...prev, enabled: nextEnabled }));
+      }
+      await onRefreshSounds();
+      setRandMsg({
+        type: 'success',
+        text: nextEnabled
+          ? 'Włączono dzwonki wylosowane — w aktywne dni grają melodie wylosowane na dany dzień.'
+          : 'Wyłączono dzwonki wylosowane — przywrócono domyślne dzwonki z harmonogramu.',
+      });
+    } catch (err: any) {
+      setRandMsg({
+        type: 'error',
+        text: err?.message || 'Nie udało się przełączyć dzwonków wylosowanych.',
+      });
+    } finally {
+      setIsTogglingRand(false);
     }
   };
 
@@ -1028,18 +1065,6 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={randomizer.enabled}
-                onChange={(e) => updateRandomizer({ enabled: e.target.checked })}
-                className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0 cursor-pointer"
-              />
-              <span className="font-semibold text-white">
-                {randomizer.enabled ? 'Losowanie AKTYWNE' : 'Tryb losowania wyłączony'}
-              </span>
-            </label>
-
             <button
               type="button"
               onClick={handleSaveRandomizer}
@@ -1048,6 +1073,66 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
             >
               {randSavedOk ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
               <span>{isSavingRand ? 'Zapisywanie...' : randSavedOk ? 'Zapisano!' : 'Zapisz ustawienia'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dedicated Master Switch: Drawn Daily Bells vs Default Schedule Bells */}
+        <div
+          className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+            randomizer.enabled
+              ? 'bg-emerald-950/35 border-emerald-700/70'
+              : 'bg-slate-900/90 border-slate-700/80'
+          }`}
+        >
+          <div className="space-y-0.5">
+            <div className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
+              <span>Włącznik dzwonków wylosowanych</span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                  randomizer.enabled
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'bg-slate-700 text-slate-200'
+                }`}
+              >
+                {randomizer.enabled ? 'WŁĄCZONY' : 'WYŁĄCZONY'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-300">
+              {randomizer.enabled
+                ? 'Aktywny tryb: w wybrane dni tygodnia dzwonią dzwonki wylosowane na dany dzień (zastępują dzwonki z harmonogramu).'
+                : 'Tryb nieaktywny: dzwonią domyślne dzwonki ustawione w harmonogramie lekcji.'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-700 shrink-0">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={randomizer.enabled}
+              disabled={isTogglingRand}
+              onClick={() => handleToggleRandomizerEnabled(true)}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 ${
+                randomizer.enabled
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {isTogglingRand && !randomizer.enabled ? 'Włączanie...' : 'Włączone (Wylosowane)'}
+            </button>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!randomizer.enabled}
+              disabled={isTogglingRand}
+              onClick={() => handleToggleRandomizerEnabled(false)}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors cursor-pointer disabled:opacity-60 ${
+                !randomizer.enabled
+                  ? 'bg-amber-400 text-slate-950 shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {isTogglingRand && randomizer.enabled ? 'Wyłączanie...' : 'Wyłączone (Harmonogram)'}
             </button>
           </div>
         </div>
@@ -1348,6 +1433,25 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
               <Check className="w-4 h-4 text-emerald-400 shrink-0" />
             )}
             <span>{randMsg.text}</span>
+          </div>
+        )}
+
+        {!randomizer.enabled && Object.keys(randomizer.weekAssignments).length > 0 && (
+          <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-700/70 text-xs flex flex-wrap items-center justify-between gap-3 text-amber-100">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                Masz już wylosowane dzwonki, ale włącznik powyżej jest <strong>WYŁĄCZONY</strong> — obecnie nadal dzwonią dzwonki ustawione w harmonogramie.
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={isTogglingRand}
+              onClick={() => handleToggleRandomizerEnabled(true)}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+            >
+              Włącz wylosowane dzwonki
+            </button>
           </div>
         )}
 

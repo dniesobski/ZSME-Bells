@@ -4095,6 +4095,71 @@ app.post(
   }
 );
 
+// 7e. Instant ON/OFF toggle between drawn daily bells and default schedule bells (Protected)
+app.post(
+  '/api/sounds/randomizer/toggle',
+  requireAnyPermission(['sounds_manage', 'schedules_edit']),
+  (req: Request, res: Response) => {
+    try {
+      if (typeof req.body?.enabled !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'Wymagana wartość logiczna enabled (true/false).',
+        });
+      }
+
+      const enabled = req.body.enabled;
+      const now = new Date();
+      const randCfg = getBellRandomizerConfig();
+      randCfg.enabled = enabled;
+      config.bellRandomizer = randCfg;
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+
+      if (enabled) {
+        evaluateBellRandomizer(now, true);
+      }
+
+      const updatedCfg = getBellRandomizerConfig();
+      const dailyStatus = getDailyRandomBellStatus(now);
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+
+      history.unshift({
+        id: `toggle_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: now.toISOString(),
+        timeStr: `${hh}:${mm}:${ss}`,
+        bellType: 'bell_draw',
+        title: enabled
+          ? 'Włączono wylosowane dzwonki na dzień'
+          : 'Wyłączono wylosowane dzwonki (powrót do harmonogramu)',
+        soundName: enabled
+          ? dailyStatus?.soundName || 'Tryb wylosowanych aktywny'
+          : 'Domyślne z harmonogramu',
+        status: 'simulated',
+        details: enabled
+          ? dailyStatus?.soundName
+            ? `Dzisiaj obowiązuje wylosowana melodia: ${dailyStatus.soundName}`
+            : 'Aktywowano tryb dzwonków wylosowanych w wybrane dni tygodnia'
+          : 'Dzwonki grają według ustawień domyślnych w harmonogramie lekcji',
+      });
+      saveHistory();
+
+      res.json({
+        success: true,
+        enabled: updatedCfg.enabled,
+        bellRandomizer: updatedCfg,
+        dailyRandomBell: dailyStatus,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err.message || 'Błąd przełączania trybu wylosowanych dzwonków.',
+      });
+    }
+  }
+);
+
 // 8. History log (Protected)
 app.get('/api/history', requireAnyPermission(['logs_view', 'dashboard_view']), (_req: Request, res: Response) => {
   res.json(history);

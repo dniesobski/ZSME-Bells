@@ -487,6 +487,35 @@ export default function App() {
     await handleSaveConfig(updated);
   };
 
+  // Instant toggle between drawn daily bells and default schedule bells
+  const handleToggleRandomBells = async (enabled: boolean) => {
+    try {
+      const res = await apiFetch('/api/sounds/randomizer/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        showNotification(data?.error || 'Nie udało się przełączyć dzwonków wylosowanych.', 'error');
+        return;
+      }
+      await Promise.all([fetchConfig(), fetchStatus(), fetchHistory()]);
+      showNotification(
+        enabled
+          ? 'Włączono wylosowane dzwonki na dzień.'
+          : 'Wyłączono wylosowane dzwonki — przywrócono domyślne z harmonogramu.',
+        enabled ? 'success' : 'info'
+      );
+    } catch {
+      showNotification('Błąd komunikacji z serwerem przy zmianie trybu dzwonków.', 'error');
+    }
+  };
+
   // Start / Stop Internet Radio on Debian server
   const handlePlayRadioLinux = async (stationId: string, volume?: number) => {
     try {
@@ -694,6 +723,8 @@ export default function App() {
               canManualBell={canManualBell}
               canChangeSchedule={canSchedules}
               canControlRadio={canRadio}
+              canToggleRandomBells={canSounds || canSchedules}
+              onToggleRandomBells={handleToggleRandomBells}
             />
           ) : (
             noAccessCard
@@ -739,6 +770,7 @@ export default function App() {
                 await fetchSounds();
                 await fetchConfig();
                 await fetchStatus();
+                await fetchHistory();
               }}
             />
           ) : (

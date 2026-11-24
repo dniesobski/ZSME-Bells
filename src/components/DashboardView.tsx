@@ -15,6 +15,7 @@ import {
   Cpu,
   MemoryStick,
   Thermometer,
+  Shuffle,
 } from 'lucide-react';
 import {
   Area,
@@ -115,6 +116,8 @@ interface DashboardViewProps {
   canManualBell?: boolean;
   canChangeSchedule?: boolean;
   canControlRadio?: boolean;
+  canToggleRandomBells?: boolean;
+  onToggleRandomBells?: (enabled: boolean) => Promise<void>;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -133,8 +136,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   canManualBell = true,
   canChangeSchedule = true,
   canControlRadio = true,
+  canToggleRandomBells = false,
+  onToggleRandomBells,
 }) => {
   const [isTestingSpeaker, setIsTestingSpeaker] = useState(false);
+  const [isTogglingRandomBells, setIsTogglingRandomBells] = useState(false);
   const [testingMsg, setTestingMsg] = useState<string | null>(null);
   const [metricsHistory, setMetricsHistory] = useState<SystemMetricsPoint[]>([]);
 
@@ -336,6 +342,86 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 Wszystkie dzwonki zaplanowane na dzisiaj zostały zakończone lub dzień jest wolny od zajęć.
               </div>
             )}
+
+            {/* Instant Switch: Drawn Daily Bells vs Default Schedule Bells */}
+            <div className="mt-3 p-2.5 rounded-lg bg-slate-900/75 border border-slate-700/70 flex items-center justify-between gap-2.5">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Shuffle
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      config.bellRandomizer?.enabled ? 'text-emerald-400' : 'text-slate-400'
+                    }`}
+                  />
+                  <span>Wylosowane dzwonki</span>
+                </div>
+                <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                  {config.bellRandomizer?.enabled
+                    ? status?.dailyRandomBell?.soundName
+                      ? `Dziś gra: ${status.dailyRandomBell.soundName}`
+                      : 'Aktywne (dzwonią wylosowane na dzień)'
+                    : 'Wyłączone (dzwonią domyślne z harmonogramu)'}
+                </div>
+              </div>
+
+              {canToggleRandomBells && onToggleRandomBells ? (
+                <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-md border border-slate-700 shrink-0">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={Boolean(config.bellRandomizer?.enabled)}
+                    disabled={isTogglingRandomBells}
+                    onClick={async () => {
+                      if (config.bellRandomizer?.enabled) return;
+                      setIsTogglingRandomBells(true);
+                      try {
+                        await onToggleRandomBells(true);
+                      } finally {
+                        setIsTogglingRandomBells(false);
+                      }
+                    }}
+                    className={`px-2 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50 ${
+                      config.bellRandomizer?.enabled
+                        ? 'bg-emerald-500 text-slate-950'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    WŁ.
+                  </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!config.bellRandomizer?.enabled}
+                    disabled={isTogglingRandomBells}
+                    onClick={async () => {
+                      if (!config.bellRandomizer?.enabled) return;
+                      setIsTogglingRandomBells(true);
+                      try {
+                        await onToggleRandomBells(false);
+                      } finally {
+                        setIsTogglingRandomBells(false);
+                      }
+                    }}
+                    className={`px-2 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50 ${
+                      !config.bellRandomizer?.enabled
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    WYŁ.
+                  </button>
+                </div>
+              ) : (
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                    config.bellRandomizer?.enabled
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                      : 'bg-slate-800 text-slate-300 border border-slate-700'
+                  }`}
+                >
+                  {config.bellRandomizer?.enabled ? 'WŁ.' : 'WYŁ.'}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Quick Actions Panel */}
