@@ -215,7 +215,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Top Banner / Status Overview Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Main Clock & Current Period Card (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
+        <div className="lg:col-span-7 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-4 sm:p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-700/60">
             <div className="flex items-center gap-2 text-xs text-slate-300">
               <span className="font-semibold text-white tracking-wide uppercase">Radiowęzeł Szkolny</span>
@@ -272,7 +272,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             {/* Current period indicator */}
-            <div className="bg-slate-900/80 border border-slate-700/60 rounded-lg p-3 min-w-[220px]">
+            <div className="bg-slate-900/80 border border-slate-700/60 rounded-lg p-3 w-full md:w-auto md:min-w-[220px]">
               <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400 block mb-1">
                 Aktualny stan zajęć
               </span>
@@ -305,7 +305,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Next Bell & Quick Actions Card (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+        <div className="lg:col-span-5 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-4 sm:p-5 shadow-sm flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center justify-between pb-2 border-b border-slate-700/60">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
@@ -429,15 +429,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">
               Szybkie Akcje
             </span>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex flex-wrap gap-2">
               {canManualBell && (
                 <>
                   <button
                     type="button"
                     onClick={onOpenManualBell}
-                    className="p-2.5 rounded-lg bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                    className="flex-1 min-w-[105px] p-2.5 rounded-lg bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-sm whitespace-nowrap"
                   >
-                    <Bell className="w-3.5 h-3.5 fill-current" />
+                    <Bell className="w-3.5 h-3.5 fill-current shrink-0" />
                     <span>Zadzwoń</span>
                   </button>
 
@@ -445,9 +445,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     type="button"
                     disabled={isTestingSpeaker}
                     onClick={handleTestSpeakerClick}
-                    className="p-2.5 rounded-lg bg-slate-700/80 hover:bg-slate-700 border border-slate-600/70 text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    className="flex-1 min-w-[105px] p-2.5 rounded-lg bg-slate-700/80 hover:bg-slate-700 border border-slate-600/70 text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
                   >
-                    <Volume2 className="w-3.5 h-3.5 text-amber-400" />
+                    <Volume2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                     <span>{isTestingSpeaker ? 'Test...' : 'Test Audio'}</span>
                   </button>
                 </>
@@ -456,12 +456,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <button
                 type="button"
                 onClick={onOpenTvMode}
-                className={`p-2.5 rounded-lg bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                  !canManualBell ? 'col-span-3' : ''
-                }`}
+                className="flex-1 min-w-[105px] p-2.5 rounded-lg bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
                 title="Otwórz pełnoekranowy widok dla telewizora na korytarzu (/tv)"
               >
-                <Tv className="w-3.5 h-3.5 text-amber-400" />
+                <Tv className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 <span>Ekran TV</span>
               </button>
             </div>
@@ -474,7 +472,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Quick Profile Switching */}
             {canChangeSchedule && (
-              <div className="flex items-center gap-1 pt-1">
+              <div className="flex flex-wrap items-center gap-1 pt-1">
                 <span className="text-[11px] text-slate-400 mr-1">Profil:</span>
                 {config.schedules.map((sch) => {
                   const isActive = sch.id === (status?.activeProfileId || config.activeProfileId);
@@ -500,18 +498,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Linux Engine Hardware Status Strip + Live Radio Control */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-7 bg-slate-800/50 border border-slate-700/60 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-3">
+        <div className="lg:col-span-7 min-w-0 bg-slate-800/50 border border-slate-700/60 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="w-7 h-7 rounded-md bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
               <Terminal className="w-3.5 h-3.5" />
             </div>
-            <div>
-              <div className="font-medium text-slate-200">
-                Host: <span className="font-mono text-amber-300">Debian 13 (Linux)</span>
-                <span className="text-slate-500 mx-2">·</span>
-                Silnik Audio: <span className="font-mono text-emerald-400 font-semibold">{status?.detectedAudioTool}</span>
-                <span className="text-slate-500 mx-2">·</span>
-                Wyjście: <span className="font-mono text-slate-300">{config.audioDevice || 'default'}</span>
+            <div className="min-w-0">
+              <div className="font-medium text-slate-200 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span>Host: <span className="font-mono text-amber-300">Debian 13 (Linux)</span></span>
+                <span className="text-slate-500 hidden sm:inline">·</span>
+                <span>Silnik Audio: <span className="font-mono text-emerald-400 font-semibold">{status?.detectedAudioTool}</span></span>
+                <span className="text-slate-500 hidden sm:inline">·</span>
+                <span>Wyjście: <span className="font-mono text-slate-300 break-all">{config.audioDevice || 'default'}</span></span>
               </div>
               <div className="text-[11px] text-slate-400">
                 Głośność dzwonków: <span className="font-mono text-slate-200">{config.masterVolume}%</span>
@@ -525,7 +523,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Live Break Radio Widget */}
-        <div className="lg:col-span-5 bg-slate-800/50 border border-slate-700/60 rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs">
+        <div className="lg:col-span-5 min-w-0 bg-slate-800/50 border border-slate-700/60 rounded-xl px-4 py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`w-7 h-7 rounded-md border flex items-center justify-center shrink-0 ${
               status?.radioStatus?.isPlaying
@@ -678,7 +676,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        <div className="w-full h-[230px]">
+        <div className="w-full h-[210px] sm:h-[250px] lg:h-[280px] min-w-0">
           {metricsHistory.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
               <AreaChart
@@ -812,8 +810,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Timeline Rows */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto -mx-1 px-1">
+          <table className="w-full min-w-[780px] text-left text-xs">
             <thead>
               <tr className="border-b border-slate-700 text-slate-400 uppercase tracking-wider text-[11px]">
                 <th className="py-2.5 px-3">Nr</th>
@@ -909,8 +907,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-2 divide-y divide-slate-700/40">
             {history.slice(0, 4).map((entry) => (
-              <div key={entry.id} className="py-2 flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
+              <div key={entry.id} className="py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
                   <span className="font-mono tabular-nums text-amber-300 font-semibold">{entry.timeStr}</span>
                   <span className="text-slate-300">{entry.title}</span>
                   <span className="text-slate-500">·</span>

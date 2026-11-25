@@ -408,7 +408,7 @@ echo "Status: systemctl status harmonia-bell"
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={handleExportBackup}
               className="px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-700/80 hover:bg-slate-700 border border-slate-600/70 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
@@ -617,7 +617,7 @@ echo "Status: systemctl status harmonia-bell"
               <span>Konfiguracja repozytorium Git (link do aplikacji)</span>
             </div>
             {(gitConfig?.repoUrl || updateCheck?.git?.repoUrl) && (
-              <span className="text-[11px] text-emerald-300 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded font-mono truncate max-w-md">
+              <span className="text-[11px] text-emerald-300 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded font-mono truncate max-w-full sm:max-w-md">
                 {gitConfig?.repoUrl || updateCheck?.git?.repoUrl}
               </span>
             )}
@@ -823,7 +823,7 @@ echo "Status: systemctl status harmonia-bell"
             </div>
           </div>
         ) : (
-          <div className="p-3.5 rounded-lg bg-slate-900/50 border border-slate-700/50 text-xs text-slate-400 flex items-center justify-between gap-3">
+          <div className="p-3.5 rounded-lg bg-slate-900/50 border border-slate-700/50 text-xs text-slate-400 flex flex-wrap items-center justify-between gap-3">
             <span>
               Kliknij „Sprawdź aktualizacje”, aby zweryfikować dostępność poprawek aplikacji oraz pakietów Debian 13.
             </span>
@@ -878,11 +878,11 @@ echo "Status: systemctl status harmonia-bell"
       {/* 1-Click Installer Files */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* install-debian.sh card */}
-        <div className="p-4 rounded-xl bg-slate-800/80 border border-slate-700/80 flex flex-col justify-between space-y-3">
+        <div className="p-4 rounded-xl bg-slate-800/80 border border-slate-700/80 flex flex-col justify-between space-y-3 min-w-0">
           <div>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-white font-bold text-sm">
-                <FileCode className="w-4 h-4 text-amber-400" />
+                <FileCode className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>Skrypt instalatora: install-debian.sh</span>
               </div>
               <span className="text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800 px-2 py-0.5 rounded">
@@ -894,7 +894,7 @@ echo "Status: systemctl status harmonia-bell"
             </p>
           </div>
 
-          <div className="pt-2 flex items-center gap-2">
+          <div className="pt-2 flex flex-wrap items-center gap-2">
             <button
               onClick={() => handleDownloadFile('install-debian.sh', bashScriptContent, 'text/x-shellscript')}
               className="px-3 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
@@ -913,11 +913,11 @@ echo "Status: systemctl status harmonia-bell"
         </div>
 
         {/* systemd service card */}
-        <div className="p-4 rounded-xl bg-slate-800/80 border border-slate-700/80 flex flex-col justify-between space-y-3">
+        <div className="p-4 rounded-xl bg-slate-800/80 border border-slate-700/80 flex flex-col justify-between space-y-3 min-w-0">
           <div>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-white font-bold text-sm">
-                <FileText className="w-4 h-4 text-amber-400" />
+                <FileText className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>Plik usługi: harmonia-bell.service</span>
               </div>
               <span className="text-[10px] text-amber-300 bg-amber-950/60 border border-amber-800 px-2 py-0.5 rounded">
@@ -929,7 +929,7 @@ echo "Status: systemctl status harmonia-bell"
             </p>
           </div>
 
-          <div className="pt-2 flex items-center gap-2">
+          <div className="pt-2 flex flex-wrap items-center gap-2">
             <button
               onClick={() =>
                 handleDownloadFile('harmonia-bell.service', systemdServiceContent, 'text/plain')
@@ -952,7 +952,7 @@ echo "Status: systemctl status harmonia-bell"
 
       {/* Terminal Steps Guide */}
       <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-700/60">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-700/60">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
             <Terminal className="w-4 h-4 text-amber-400" />
             Szybka Instalacja w Terminalu Debian 13
@@ -1020,39 +1020,39 @@ echo "Status: systemctl status harmonia-bell"
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60">
+          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60 min-w-0">
             <span className="text-slate-400 block mb-1">Sprawdzenie statusu usługi dzwonków:</span>
-            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
+            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded overflow-x-auto whitespace-nowrap">
               systemctl status harmonia-bell
             </code>
           </div>
 
-          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60">
+          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60 min-w-0">
             <span className="text-slate-400 block mb-1">Podgląd dziennika logów w czasie rzeczywistym:</span>
-            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
+            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded overflow-x-auto whitespace-nowrap">
               journalctl -u harmonia-bell -f
             </code>
           </div>
 
-          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60">
+          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60 min-w-0">
             <span className="text-slate-400 block mb-1">Test karty dźwiękowej ALSA:</span>
-            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
+            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded overflow-x-auto whitespace-nowrap">
               speaker-test -t sine -f 440 -c 2 -l 1
             </code>
           </div>
 
-          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60">
+          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60 min-w-0">
             <span className="text-slate-400 block mb-1">Regulacja miksera sprzętowego ALSA:</span>
-            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
+            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded overflow-x-auto whitespace-nowrap">
               alsamixer
             </code>
           </div>
 
-          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60 md:col-span-2">
+          <div className="p-3 rounded-lg bg-slate-900/70 border border-slate-700/60 md:col-span-2 min-w-0">
             <span className="text-slate-400 block mb-1">
               Uruchomienie pełnoekranowego widoku na telewizorze szkolnym (tryb kiosku):
             </span>
-            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded">
+            <code className="text-amber-300 font-mono font-bold block bg-slate-950 p-2 rounded overflow-x-auto whitespace-nowrap">
               chromium --kiosk --noerrdialogs --disable-infobars http://ADRES_IP_DEBIANA:3000/tv
             </code>
           </div>

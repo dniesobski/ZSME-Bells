@@ -45,11 +45,11 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-4 h-16">
+      <div className="w-full max-w-[1720px] mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-2 sm:gap-4 h-14 sm:h-16 min-w-0">
           {/* Zone 1: Single text element wordmark */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
               <Radio className="w-4 h-4" />
             </div>
             <a
@@ -60,14 +60,17 @@ export const TopBar: React.FC<TopBarProps> = ({
                   onTabChange(navItems[0].id);
                 }
               }}
-              className="text-base font-bold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-amber-400 transition-colors"
+              className="text-sm sm:text-base font-bold tracking-tight text-white whitespace-nowrap shrink-0 hover:text-amber-400 transition-colors"
             >
-              HarmoniaBell <span className="font-mono text-xs font-normal text-slate-400 ml-1">Debian 13</span>
+              HarmoniaBell{' '}
+              <span className="hidden sm:inline font-mono text-xs font-normal text-slate-400 ml-1">
+                Debian 13
+              </span>
             </a>
           </div>
 
-          {/* Zone 2: Clean single-line text navigation links */}
-          <nav className="hidden xl:flex items-center gap-3.5 text-sm font-medium text-slate-300">
+          {/* Zone 2: Clean single-line text navigation links (wide viewports) */}
+          <nav className="hidden 2xl:flex flex-1 min-w-0 items-center justify-center gap-4 text-sm font-medium text-slate-300 overflow-x-auto no-scrollbar px-2">
             {navItems.map((item) => {
               const isActive = activeTab === item.id;
               return (
@@ -88,7 +91,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           </nav>
 
           {/* Zone 3: Primary action group */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Live Clock Badge */}
             <div className="hidden sm:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 font-mono text-xs tabular-nums text-slate-200">
               <span className="text-slate-400 hidden 2xl:inline">CZAS:</span>
@@ -122,10 +125,11 @@ export const TopBar: React.FC<TopBarProps> = ({
                 {/* Manual Bell Button */}
                 <button
                   onClick={onOpenManualBell}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer whitespace-nowrap"
+                  className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer whitespace-nowrap"
                 >
-                  <Bell className="w-3.5 h-3.5 fill-current" />
-                  <span>Dzwonek Ręczny</span>
+                  <Bell className="w-3.5 h-3.5 fill-current shrink-0" />
+                  <span className="hidden sm:inline">Dzwonek Ręczny</span>
+                  <span className="sm:hidden">Dzwonek</span>
                 </button>
               </>
             )}
@@ -141,15 +145,15 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         </div>
 
-        {/* Mobile / Tablet secondary tab strip */}
-        <div className="xl:hidden flex items-center gap-2 py-2 overflow-x-auto border-t border-slate-800/60 no-scrollbar">
+        {/* Mobile / Tablet / Laptop secondary tab strip */}
+        <div className="2xl:hidden flex items-center gap-1.5 sm:gap-2 py-2 overflow-x-auto border-t border-slate-800/60 no-scrollbar">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => onTabChange(item.id)}
-                className={`px-3 py-1 text-xs rounded-md whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                className={`px-2.5 sm:px-3 py-1 text-xs rounded-md whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                   isActive
                     ? 'bg-amber-400/15 text-amber-300 font-semibold border border-amber-400/30'
                     : 'text-slate-400 hover:text-slate-200'

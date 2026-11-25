@@ -729,7 +729,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             cmdInputRef.current?.focus();
           }
         }}
-        className="bg-slate-950 border border-slate-800 rounded-xl p-4 h-[460px] overflow-y-auto font-mono text-xs sm:text-[13px] leading-relaxed shadow-inner space-y-3"
+        className="bg-slate-950 border border-slate-800 rounded-xl p-3 sm:p-4 h-[clamp(260px,50dvh,640px)] overflow-y-auto font-mono text-xs sm:text-[13px] leading-relaxed shadow-inner space-y-3"
       >
         {entries.length === 0 ? (
           <div className="text-slate-500 space-y-1">
@@ -782,7 +782,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             value={stdinInput}
             onChange={(e) => setStdinInput(e.target.value)}
             placeholder="Wpisz odpowiedź (np. y) i Enter..."
-            className="flex-1 min-w-[200px] px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-amber-400"
+            className="w-full sm:w-auto sm:flex-1 sm:min-w-[200px] px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-amber-400"
           />
           <button
             type="submit"
@@ -848,40 +848,42 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           e.preventDefault();
           void executeCommand(commandInput);
         }}
-        className="bg-slate-950 border border-slate-700/90 rounded-xl px-3.5 py-2.5 flex items-center gap-2.5 focus-within:border-amber-400 transition-colors"
+        className="bg-slate-950 border border-slate-700/90 rounded-xl px-3 sm:px-3.5 py-2.5 flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-2.5 focus-within:border-amber-400 transition-colors"
       >
-        <span className="font-mono text-xs sm:text-sm font-bold text-emerald-400 shrink-0 max-w-[45%] truncate">
+        <span className="font-mono text-xs sm:text-sm font-bold text-emerald-400 shrink-0 max-w-full sm:max-w-[42%] truncate">
           {userLabel}@{hostLabel}:{cwd}#
         </span>
-        <input
-          ref={cmdInputRef}
-          type="text"
-          value={commandInput}
-          onChange={(e) => {
-            setCommandInput(e.target.value);
-            if (tabSuggestions.length > 0) {
-              setTabSuggestions([]);
-              setTabSpan(null);
+        <div className="flex flex-1 min-w-0 items-center gap-2 w-full sm:w-auto">
+          <input
+            ref={cmdInputRef}
+            type="text"
+            value={commandInput}
+            onChange={(e) => {
+              setCommandInput(e.target.value);
+              if (tabSuggestions.length > 0) {
+                setTabSuggestions([]);
+                setTabSpan(null);
+              }
+            }}
+            onKeyDown={handleInputKeyDown}
+            disabled={Boolean(runningJobId)}
+            placeholder={
+              runningJobId
+                ? 'Polecenie w toku... Użyj Ctrl+C lub przycisku Przerwij'
+                : 'Wpisz polecenie Linux (Tab uzupełnia, np. systemctl status harmoniabell.service)...'
             }
-          }}
-          onKeyDown={handleInputKeyDown}
-          disabled={Boolean(runningJobId)}
-          placeholder={
-            runningJobId
-              ? 'Polecenie w toku... Użyj Ctrl+C lub przycisku Przerwij'
-              : 'Wpisz polecenie Linux (Tab uzupełnia, np. systemctl status harmoniabell.service)...'
-          }
-          className="flex-1 bg-transparent font-mono text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none disabled:opacity-50"
-          autoFocus
-        />
-        <button
-          type="submit"
-          disabled={Boolean(runningJobId) || !commandInput.trim()}
-          className="px-3.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40 shrink-0"
-        >
-          <Play className="w-3.5 h-3.5 fill-current" />
-          <span>Wykonaj</span>
-        </button>
+            className="flex-1 min-w-0 bg-transparent font-mono text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none disabled:opacity-50"
+            autoFocus
+          />
+          <button
+            type="submit"
+            disabled={Boolean(runningJobId) || !commandInput.trim()}
+            className="px-3 sm:px-3.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-40 shrink-0"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>Wykonaj</span>
+          </button>
+        </div>
       </form>
     </div>
   );

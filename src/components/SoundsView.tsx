@@ -791,7 +791,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
 
         {/* URL & Action Bar */}
         <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center text-xs">
-          <div className="flex-1 flex items-center gap-2">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
             <input
               type="url"
               value={remoteUrl}
@@ -1185,7 +1185,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium text-slate-300">
                   Dni lekcyjne w tygodniu ({sortedActiveDays.length} dzwonków na tydzień):
                 </span>
@@ -1207,7 +1207,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-7 gap-1.5">
+              <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
                 {WEEK_DAYS_ORDERED.map((day) => {
                   const selected = randomizer.activeDays.includes(day.key);
                   return (
@@ -1700,7 +1700,7 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
 
       {/* Built-in Presets Grid */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-amber-400" />
             Wbudowane Melodie Bezstresowe ({presets.length})
@@ -1839,8 +1839,8 @@ export const SoundsView: React.FC<SoundsViewProps> = ({
         </div>
 
         {/* Custom Uploads List (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+        <div className="lg:col-span-7 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
             <div className="flex items-center gap-2">
               <FileAudio className="w-4 h-4 text-amber-400" />
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">

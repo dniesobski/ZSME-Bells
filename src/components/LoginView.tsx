@@ -67,7 +67,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6">
+    <div className="min-h-dvh bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6">
       <div className="flex-1 flex items-center justify-center">
         <div className="w-full max-w-md space-y-5">
           {/* Brand Header */}
@@ -161,7 +161,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </form>
 
             {/* Public TV Screen bypass link */}
-            <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
+            <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <span className="text-[11px] text-slate-400">
                 Ekran na korytarz szkolny nie wymaga hasła
               </span>

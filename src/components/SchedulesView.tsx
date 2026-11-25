@@ -440,7 +440,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
 
         {/* Profile Tabs & Details */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-          <div className="md:col-span-4 flex flex-wrap gap-2">
+          <div className="md:col-span-4 min-w-0 flex flex-wrap gap-2">
             {localProfiles.map((p) => {
               const isSelected = p.id === selectedProfileId;
               const isActiveInSystem = p.id === config.activeProfileId;
@@ -470,7 +470,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
             })}
           </div>
 
-          <div className="md:col-span-8 bg-slate-900/70 border border-slate-800 rounded-lg p-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="md:col-span-8 min-w-0 bg-slate-900/70 border border-slate-800 rounded-lg p-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <div>
               <label className="block text-[11px] text-slate-400 mb-1">Nazwa profilu</label>
               <input
@@ -529,7 +529,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 text-xs">
               <div>
                 <label className="block text-[11px] text-slate-400 mb-1">Godzina 1. lekcji</label>
                 <input
@@ -789,7 +789,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
 
       {/* Bells Table Editor */}
       <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-700/60">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-amber-400" />
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">
@@ -806,8 +806,8 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
           </button>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto -mx-1 px-1">
+          <table className="w-full min-w-[960px] text-left text-xs">
             <thead>
               <tr className="border-b border-slate-700 text-slate-400 uppercase tracking-wider text-[11px]">
                 <th className="py-2.5 px-2 w-10">Lp</th>
@@ -1012,7 +1012,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
         </div>
 
         {/* Bottom Save Bar */}
-        <div className="pt-3 border-t border-slate-700 flex items-center justify-between">
+        <div className="pt-3 border-t border-slate-700 flex flex-wrap items-center justify-between gap-3">
           <span className="text-xs text-slate-400">
             Pamiętaj o kliknięciu <strong>Zapisz Plan</strong>, aby zaktualizować harmonogram w systemie Linux.
           </span>
@@ -1242,7 +1242,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
           </div>
         )}
 
-        <div className="pt-3 border-t border-slate-700 flex items-center justify-between gap-3">
+        <div className="pt-3 border-t border-slate-700 flex flex-wrap items-center justify-between gap-3">
           <span className="text-xs text-slate-400">
             Zapisanie planu aktualizuje zarówno harmonogramy dzwonków, jak i harmonogram pracy wzmacniacza.
           </span>

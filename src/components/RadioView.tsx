@@ -503,7 +503,7 @@ export const RadioView: React.FC<RadioViewProps> = ({
                       isBreakEnabled ? 'bg-amber-500/5' : ''
                     }`}
                   >
-                    <label className="flex items-center gap-3 cursor-pointer flex-1 min-w-[200px]">
+                    <label className="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
                       <input
                         type="checkbox"
                         checked={isBreakEnabled}
@@ -557,8 +557,8 @@ export const RadioView: React.FC<RadioViewProps> = ({
       {/* Radio Stations Catalog + Add New Station */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Stations List (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+        <div className="lg:col-span-7 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <Wifi className="w-4 h-4 text-amber-400" />
               Lista Stacji Radiowych ({stations.length})
@@ -694,7 +694,7 @@ export const RadioView: React.FC<RadioViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setDefaultStationId(station.id)}
-                        className="px-2.5 py-1 text-xs rounded-md text-amber-300 hover:bg-amber-500/10 transition-colors cursor-pointer ml-auto"
+                        className="px-2.5 py-1 text-xs rounded-md text-amber-300 hover:bg-amber-500/10 transition-colors cursor-pointer sm:ml-auto"
                       >
                         Ustaw jako domyślną
                       </button>

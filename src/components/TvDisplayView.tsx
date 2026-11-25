@@ -265,7 +265,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
 
   return (
     <div
-      className="min-h-screen flex flex-col justify-between p-5 sm:p-8 lg:p-10 select-none relative overflow-hidden transition-colors duration-300"
+      className="min-h-dvh w-full flex flex-col justify-between p-3 sm:p-5 lg:p-[clamp(1rem,2.4vh,2.5rem)] gap-3 lg:gap-[clamp(0.75rem,1.6vh,1.5rem)] select-none relative overflow-x-clip transition-colors duration-300"
       style={{
         backgroundColor: tvCfg.backgroundColor,
         color: tvCfg.textColor,
@@ -273,7 +273,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
     >
       {/* Subtle auto-hiding top-right kiosk controls */}
       <div
-        className={`fixed top-4 right-4 z-50 flex items-center gap-2 transition-opacity duration-300 ${
+        className={`fixed top-3 right-3 sm:top-4 sm:right-4 max-w-[calc(100vw-1.5rem)] z-50 flex flex-wrap justify-end items-center gap-2 transition-opacity duration-300 ${
           controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
@@ -299,25 +299,28 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
       {/* 1. TV Header Bar */}
       {tvCfg.showHeader && (
         <header
-          className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b"
+          className="flex flex-wrap items-center justify-between gap-3 sm:gap-4 pb-3 sm:pb-4 border-b min-w-0"
           style={{ borderColor: subtleBorder }}
         >
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <div
-              className="w-11 h-11 rounded-xl border flex items-center justify-center shrink-0"
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center shrink-0"
               style={{
                 backgroundColor: hexToRgba(tvCfg.accentColor, 0.14),
                 borderColor: hexToRgba(tvCfg.accentColor, 0.35),
                 color: tvCfg.accentColor,
               }}
             >
-              <Radio className="w-6 h-6" />
+              <Radio className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight" style={{ color: tvCfg.textColor }}>
+            <div className="min-w-0">
+              <h1
+                className="text-[clamp(1.1rem,2.2vw,1.65rem)] font-bold tracking-tight truncate"
+                style={{ color: tvCfg.textColor }}
+              >
                 {schoolTitle}
               </h1>
-              <div className="text-xs sm:text-sm flex items-center gap-2" style={{ color: tvCfg.mutedTextColor }}>
+              <div className="text-xs sm:text-sm flex flex-wrap items-center gap-x-2 gap-y-0.5" style={{ color: tvCfg.mutedTextColor }}>
                 {tvCfg.headerSubtitlePrefix && <span>{tvCfg.headerSubtitlePrefix}</span>}
                 <span className="font-semibold" style={{ color: tvCfg.accentColor }}>
                   {activeProfile.name}
@@ -327,13 +330,13 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
           </div>
 
           {tvCfg.showDate && (
-            <div className="flex items-center gap-3 text-right">
+            <div className="flex items-center gap-3 text-left sm:text-right">
               <div>
                 <div
-                  className="text-base sm:text-xl font-semibold capitalize flex items-center gap-2 justify-end"
+                  className="text-[clamp(0.95rem,1.6vw,1.35rem)] font-semibold capitalize flex items-center gap-2 sm:justify-end"
                   style={{ color: tvCfg.textColor }}
                 >
-                  <Calendar className="w-5 h-5 hidden sm:inline" style={{ color: tvCfg.accentColor }} />
+                  <Calendar className="w-4 h-4 sm:w-5 sm:h-5 hidden sm:inline shrink-0" style={{ color: tvCfg.accentColor }} />
                   <span>{todayFormatted}</span>
                 </div>
                 <div className="text-xs sm:text-sm font-mono" style={{ color: tvCfg.mutedTextColor }}>
@@ -354,26 +357,26 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
       {/* Optional Announcement Banner */}
       {tvCfg.announcementText && (
         <div
-          className="mt-4 rounded-xl border px-5 py-3 flex items-center gap-3"
+          className="rounded-xl border px-4 py-2.5 sm:px-5 sm:py-3 flex items-center gap-3 min-w-0"
           style={{
             backgroundColor: hexToRgba(tvCfg.accentColor, 0.12),
             borderColor: hexToRgba(tvCfg.accentColor, 0.45),
           }}
         >
           <Megaphone className="w-5 h-5 shrink-0" style={{ color: tvCfg.accentColor }} />
-          <span className="text-sm sm:text-lg font-semibold tracking-tight" style={{ color: tvCfg.textColor }}>
+          <span className="text-sm sm:text-lg font-semibold tracking-tight break-words" style={{ color: tvCfg.textColor }}>
             {tvCfg.announcementText}
           </span>
         </div>
       )}
 
       {/* 2. Center Main Grid: Massive Clock + State + Next Bell + Radio */}
-      <main className="my-auto py-6 grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
+      <main className="my-auto py-2 sm:py-3 lg:py-[clamp(0.5rem,1.5vh,1.5rem)] grid grid-cols-1 xl:grid-cols-12 gap-4 lg:gap-[clamp(1rem,2vw,1.75rem)] items-stretch min-w-0">
         {/* Left Focal Card: Digital Clock & Current Lesson / Break State */}
         <section
           className={`${
             hasRightColumn ? 'xl:col-span-7' : 'xl:col-span-12'
-          } rounded-2xl border p-6 sm:p-8 lg:p-10 flex flex-col justify-between gap-6`}
+          } min-w-0 rounded-2xl border p-4 sm:p-6 lg:p-[clamp(1.25rem,2.5vh,2.5rem)] flex flex-col justify-between gap-4 lg:gap-[clamp(0.75rem,2vh,1.5rem)]`}
           style={{
             backgroundColor: stateInfo.cardBg,
             borderColor: stateInfo.cardBorder,
@@ -403,7 +406,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
           {/* Giant Clock */}
           <div>
             <div
-              className="text-[4.25rem] sm:text-[6.25rem] lg:text-[7.5rem] leading-none font-extrabold font-mono tabular-nums tracking-tight"
+              className="text-[clamp(2.75rem,min(11vw,14vh),7.75rem)] leading-none font-extrabold font-mono tabular-nums tracking-tight"
               style={{ color: tvCfg.textColor }}
             >
               {displayTime}
@@ -411,15 +414,18 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
           </div>
 
           {/* Current Lesson / Break Headline + Progress Bar */}
-          <div className="space-y-4 pt-4 border-t" style={{ borderColor: subtleBorder }}>
+          <div className="space-y-3 sm:space-y-4 pt-3 sm:pt-4 border-t" style={{ borderColor: subtleBorder }}>
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <div>
-                <div className="text-2xl sm:text-4xl font-bold tracking-tight" style={{ color: tvCfg.textColor }}>
+              <div className="min-w-0">
+                <div
+                  className="text-[clamp(1.35rem,min(3.5vw,4.5vh),2.5rem)] font-bold tracking-tight break-words"
+                  style={{ color: tvCfg.textColor }}
+                >
                   {stateInfo.headline}
                 </div>
                 {stateInfo.subline && (
                   <div
-                    className="text-base sm:text-xl font-mono tabular-nums mt-1"
+                    className="text-[clamp(0.95rem,2vw,1.35rem)] font-mono tabular-nums mt-1"
                     style={{ color: tvCfg.mutedTextColor }}
                   >
                     Godziny: {stateInfo.subline}
@@ -432,12 +438,12 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
                 status.currentPeriod.remainingSeconds > 0 &&
                 !status.isHoliday &&
                 !status.isWeekend && (
-                  <div className="text-right">
+                  <div className="text-left sm:text-right">
                     <span className="text-xs uppercase tracking-wider block" style={{ color: tvCfg.mutedTextColor }}>
                       Do końca pozostało
                     </span>
                     <span
-                      className="text-2xl sm:text-3xl font-extrabold font-mono tabular-nums"
+                      className="text-[clamp(1.25rem,min(3vw,4vh),2.25rem)] font-extrabold font-mono tabular-nums"
                       style={{ color: tvCfg.textColor }}
                     >
                       {formatCountdown(status.currentPeriod.remainingSeconds)}
@@ -452,7 +458,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
               !status.isHoliday &&
               !status.isWeekend && (
                 <div
-                  className="w-full h-4 rounded-full overflow-hidden border"
+                  className="w-full h-3 sm:h-4 rounded-full overflow-hidden border"
                   style={{
                     backgroundColor: hexToRgba(tvCfg.backgroundColor, 0.75),
                     borderColor: subtleBorder,
@@ -472,11 +478,11 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
 
         {/* Right Info Stack: Next Bell + Radio Status (5 cols) */}
         {hasRightColumn && (
-          <section className="xl:col-span-5 flex flex-col gap-6 justify-between">
+          <section className="xl:col-span-5 min-w-0 flex flex-col gap-4 lg:gap-[clamp(0.75rem,1.8vh,1.5rem)] justify-between">
             {/* Next Bell Panel */}
             {tvCfg.showNextBellBlock && (
               <div
-                className="flex-1 rounded-2xl border p-6 sm:p-8 flex flex-col justify-between"
+                className="flex-1 rounded-2xl border p-4 sm:p-6 lg:p-[clamp(1rem,2.2vh,2rem)] flex flex-col justify-between"
                 style={{
                   backgroundColor: tvCfg.panelColor,
                   borderColor: subtleBorder,
@@ -546,7 +552,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
             {/* Radio On-Air Panel */}
             {tvCfg.showRadioBlock && (
               <div
-                className="rounded-2xl border p-6 sm:p-7 flex flex-col justify-between"
+                className="rounded-2xl border p-4 sm:p-6 lg:p-[clamp(1rem,2vh,1.75rem)] flex flex-col justify-between"
                 style={{
                   backgroundColor: status?.radioStatus?.isPlaying
                     ? hexToRgba(tvCfg.breakColor, 0.14)
@@ -613,7 +619,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
 
       {/* 3. Bottom Strip: Today's Lesson & Break Timeline */}
       {tvCfg.showScheduleStrip && (
-        <footer className="pt-5 border-t space-y-3" style={{ borderColor: subtleBorder }}>
+        <footer className="pt-3 sm:pt-4 border-t space-y-2.5" style={{ borderColor: subtleBorder }}>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
             <span className="font-semibold uppercase tracking-wider" style={{ color: tvCfg.textColor }}>
               {tvCfg.scheduleStripTitle} ({activeProfile.items.length} lekcji)
@@ -625,7 +631,7 @@ export const TvDisplayView: React.FC<TvDisplayViewProps> = ({
             )}
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-[repeat(auto-fit,minmax(135px,1fr))] gap-2 sm:gap-2.5">
             {activeProfile.items
               .filter((item) => item.enabled)
               .map((item, idx, arr) => {

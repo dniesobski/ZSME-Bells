@@ -62,7 +62,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ history, onClearHistory }) =
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleExportCSV}
             disabled={history.length === 0}
@@ -134,8 +134,8 @@ export const LogsView: React.FC<LogsViewProps> = ({ history, onClearHistory }) =
             Brak zdarzeń spełniających wybrane kryteria wyszukiwania.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+          <div className="overflow-x-auto -mx-1 px-1">
+            <table className="w-full min-w-[740px] text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-700 text-slate-400 uppercase tracking-wider text-[11px]">
                   <th className="py-2.5 px-3">Godzina</th>
@@ -195,7 +195,7 @@ export const LogsView: React.FC<LogsViewProps> = ({ history, onClearHistory }) =
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3 font-mono text-[11px] text-slate-400">
+                    <td className="py-3 px-3 font-mono text-[11px] text-slate-400 max-w-xs break-words">
                       {item.details || '—'}
                     </td>
                   </tr>

@@ -152,7 +152,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ config, onSaveConfig
       {/* Holidays & Exceptions Manager */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Form: Add holiday (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+        <div className="lg:col-span-5 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-700/60">
             <Plus className="w-4 h-4 text-amber-400" />
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">
@@ -173,7 +173,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ config, onSaveConfig
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="block text-slate-300 mb-1">Data początkowa</label>
                 <input
@@ -237,8 +237,8 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ config, onSaveConfig
         </div>
 
         {/* List of holidays (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+        <div className="lg:col-span-7 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">
               Zarejestrowane Dni Wolne i Wyjątki ({holidays.length})
             </h3>
@@ -249,7 +249,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ config, onSaveConfig
             {holidays.map((h) => {
               const isDateRange = h.startDate !== h.endDate;
               return (
-                <div key={h.id} className="py-2.5 flex items-center justify-between text-xs hover:bg-slate-750">
+                <div key={h.id} className="py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs hover:bg-slate-750">
                   <div>
                     <div className="font-semibold text-white">{h.name}</div>
                     <div className="font-mono text-[11px] text-slate-400">

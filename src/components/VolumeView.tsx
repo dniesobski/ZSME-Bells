@@ -333,7 +333,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={isTesting}
@@ -364,7 +364,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
       {/* Grid: Master volume & Schedule */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left: Master Volume & Acoustic Controls (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-5">
+        <div className="lg:col-span-5 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-5">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider pb-2 border-b border-slate-700/60">
             Główna Głośność i Akustyka
           </h3>
@@ -440,8 +440,8 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
         </div>
 
         {/* Right: Hourly Volume Schedule (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-700/60">
+        <div className="lg:col-span-7 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-700/60">
             <div>
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Harmonogram Głośności w Ciągu Dnia
@@ -475,8 +475,8 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
                   />
                 </div>
 
-                <div className="sm:col-span-4 flex items-center gap-1.5">
-                  <div className="w-1/2">
+                <div className="sm:col-span-4 grid grid-cols-2 gap-1.5 min-w-0">
+                  <div className="min-w-0">
                     <label className="text-[10px] text-slate-400 block mb-0.5">Od</label>
                     <input
                       type="time"
@@ -485,7 +485,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
                       className="w-full px-1.5 py-1 bg-slate-800 border border-slate-700 rounded text-slate-200 font-mono text-xs"
                     />
                   </div>
-                  <div className="w-1/2">
+                  <div className="min-w-0">
                     <label className="text-[10px] text-slate-400 block mb-0.5">Do</label>
                     <input
                       type="time"
@@ -622,7 +622,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 text-xs">
-          <div className="lg:col-span-7 space-y-3">
+          <div className="lg:col-span-7 min-w-0 space-y-3">
             <div>
               <label className="block text-slate-300 font-medium mb-1">
                 Ścieżka do sterownika / urządzenia wzmacniacza
@@ -643,7 +643,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
             </div>
 
             <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-700/60 space-y-2">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] font-semibold text-slate-300">
                   Wykryte porty ({detectedSerialPorts.length}):
                 </span>
@@ -724,7 +724,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
             </div>
           </div>
 
-          <div className="lg:col-span-5 p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 flex flex-col justify-between space-y-3">
+          <div className="lg:col-span-5 min-w-0 p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 flex flex-col justify-between space-y-3">
             <div className="space-y-1.5">
               <span className="font-semibold text-slate-200 block">Test ręczny sterownika wzmacniacza</span>
               <p className="text-[11px] text-slate-400 leading-relaxed">
@@ -836,7 +836,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
 
         {/* Live Mini-Preview */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="font-semibold text-slate-300 flex items-center gap-1.5">
               <Eye className="w-3.5 h-3.5 text-amber-400" />
               Podgląd układu i kolorów ekranu TV na żywo
@@ -988,7 +988,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {['Lekcja 1', 'Lekcja 2', 'Lekcja 3', 'Lekcja 4'].map((item, idx) => (
                     <div
                       key={item}
@@ -1014,7 +1014,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
         {/* Form Grid: Texts (Left) + Blocks & Colors (Right) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 text-xs">
           {/* Texts Editor */}
-          <div className="lg:col-span-5 p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 space-y-3">
+          <div className="lg:col-span-5 min-w-0 p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 space-y-3">
             <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">
               <Type className="w-4 h-4 text-amber-400" />
               <h4 className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
@@ -1118,7 +1118,7 @@ export const VolumeView: React.FC<VolumeViewProps> = ({
           </div>
 
           {/* Blocks Visibility & Colors */}
-          <div className="lg:col-span-7 space-y-4">
+          <div className="lg:col-span-7 min-w-0 space-y-4">
             {/* Blocks Toggles */}
             <div className="p-4 rounded-lg bg-slate-900/70 border border-slate-700/60 space-y-3">
               <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">

@@ -465,8 +465,8 @@ export const AccountView: React.FC<AccountViewProps> = ({
       {/* ==================== TAB 1: MOJE KONTO ==================== */}
       {subTab === 'profile' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <div className="lg:col-span-7 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+          <div className="lg:col-span-7 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Zmiana Loginu i Hasła
               </h3>
@@ -576,7 +576,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
             </form>
           </div>
 
-          <div className="lg:col-span-5 space-y-4">
+          <div className="lg:col-span-5 min-w-0 space-y-4">
             <div className="bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-3 text-xs">
               <div className="flex items-center gap-2 pb-2 border-b border-slate-700/60">
                 <ShieldCheck className="w-4 h-4 text-amber-400" />
@@ -640,7 +640,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
       {subTab === 'users' && canManageUsers && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Create User Card (4 cols) */}
-          <div className="lg:col-span-4 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4 h-fit">
+          <div className="lg:col-span-4 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4 h-fit">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-700/60">
               <UserPlus className="w-4 h-4 text-amber-400" />
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
@@ -724,8 +724,8 @@ export const AccountView: React.FC<AccountViewProps> = ({
           </div>
 
           {/* Users Table Card (8 cols) */}
-          <div className="lg:col-span-8 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+          <div className="lg:col-span-8 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                 <Users className="w-4 h-4 text-amber-400" />
                 Lista Użytkowników Systemu
@@ -840,7 +840,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                           value={resetPasswordValue}
                           onChange={(e) => setResetPasswordValue(e.target.value)}
                           placeholder="Nowe hasło (min. 4 znaki)"
-                          className="flex-1 min-w-[180px] px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:border-amber-400"
+                          className="w-full sm:w-auto sm:flex-1 sm:min-w-[180px] px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:border-amber-400"
                         />
                         <button
                           type="button"
@@ -870,8 +870,8 @@ export const AccountView: React.FC<AccountViewProps> = ({
       {subTab === 'groups' && canManageUsers && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Group Editor Card (6 cols) */}
-          <div className="lg:col-span-6 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4 h-fit">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+          <div className="lg:col-span-6 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4 h-fit">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
                 <Shield className="w-4 h-4 text-amber-400" />
                 {editingGroupId ? 'Edycja Grupy Uprawnień' : 'Utwórz Nową Grupę'}
@@ -914,7 +914,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
               </div>
 
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-slate-300 font-medium">
                     Uprawnienia modułów ({groupPermissions.length}/{ALL_PERMISSION_KEYS.length})
                   </span>
@@ -997,8 +997,8 @@ export const AccountView: React.FC<AccountViewProps> = ({
           </div>
 
           {/* Groups List Card (6 cols) */}
-          <div className="lg:col-span-6 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700/60">
+          <div className="lg:col-span-6 min-w-0 bg-slate-800/80 border border-slate-700/80 rounded-xl p-5 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-700/60">
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Zdefiniowane Grupy
               </h3>
@@ -1019,7 +1019,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                         : 'bg-slate-900/70 border-slate-700/70'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-white text-sm">{grp.name}</span>

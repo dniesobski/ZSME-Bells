@@ -662,7 +662,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-dvh bg-slate-900 text-slate-100 flex flex-col font-sans overflow-x-clip">
       {/* Top Navigation Bar */}
       <TopBar
         status={status}
@@ -676,7 +676,7 @@ export default function App() {
 
       {/* Floating Toast Notification */}
       {notification && (
-        <div className="fixed bottom-6 right-6 z-50 animate-bounce-in">
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:bottom-6 sm:right-6 sm:max-w-md z-50 animate-bounce-in">
           <div
             className={`px-4 py-2.5 rounded-lg border shadow-xl text-xs font-medium flex items-center gap-2 ${
               notification.type === 'success'
@@ -686,7 +686,7 @@ export default function App() {
                 : 'bg-slate-800/95 border-slate-700 text-slate-200'
             }`}
           >
-            <span>{notification.msg}</span>
+            <span className="break-words">{notification.msg}</span>
           </div>
         </div>
       )}
@@ -694,8 +694,8 @@ export default function App() {
       {/* Default credentials reminder banner */}
       {auth.mustChangePassword && activeTab !== 'account' && (
         <div className="bg-amber-500/10 border-b border-amber-500/25">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-amber-200">
+          <div className="w-full max-w-[1720px] mx-auto px-3 sm:px-6 lg:px-8 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-amber-200 min-w-0">
               <KeyRound className="w-4 h-4 text-amber-400 shrink-0" />
               <span>
                 {auth.username === 'admin' ? (
@@ -718,7 +718,7 @@ export default function App() {
       )}
 
       {/* Main Content Viewport */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 w-full max-w-[1720px] mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 min-w-0">
         {activeTab === 'dashboard' &&
           (canDashboard ? (
             <DashboardView
@@ -862,15 +862,15 @@ export default function App() {
       />
 
       {/* Institutional Footer */}
-      <footer className="mt-auto border-t border-slate-800 py-6 text-xs text-slate-400">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+      <footer className="mt-auto border-t border-slate-800 py-5 text-xs text-slate-400">
+        <div className="w-full max-w-[1720px] mx-auto px-3 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-center sm:text-left">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 gap-y-1">
             <span className="font-semibold text-slate-300">HarmoniaBell</span>
             <span>·</span>
             <span>System Bezstresowych Dzwonków Szkolnych dla Linux Debian 13</span>
           </div>
 
-          <div className="flex items-center gap-4 text-slate-400">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-x-3 gap-y-1 text-slate-400">
             <span>Sterownik ALSA / PulseAudio</span>
             <span>·</span>
             <span>Port 3000</span>

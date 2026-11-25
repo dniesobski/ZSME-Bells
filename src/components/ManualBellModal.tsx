@@ -60,8 +60,8 @@ export const ManualBellModal: React.FC<ManualBellModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-6 text-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+      <div className="relative w-full max-w-lg max-h-[92dvh] overflow-y-auto bg-slate-900 border border-slate-800 rounded-xl shadow-2xl p-4 sm:p-6 text-slate-100">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -174,7 +174,7 @@ export const ManualBellModal: React.FC<ManualBellModalProps> = ({
             <span>{isPlayingPreview ? 'Zatrzymaj odsłuch' : 'Odsłuchaj w przeglądarce'}</span>
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={isSubmitting}
